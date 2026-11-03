@@ -107,3 +107,9 @@ InitTestScene*.unity*
 
 # Auto-generated cache in Assets folder
 /[Aa]ssets/[Ss]ceneDependencyCache*
+
+/VRLaserTag/Library/
+/VRLaserTag/Temp/
+/VRLaserTag/Obj/
+/VRLaserTag/Logs/
+/VRLaserTag/UserSettings/
