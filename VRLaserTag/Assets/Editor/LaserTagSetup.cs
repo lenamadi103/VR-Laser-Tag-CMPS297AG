@@ -702,8 +702,11 @@ public static class LaserTagSetup
         canvas.sortingOrder = 10;
         Transform hud = canvas.transform;
 
+        // The flash extends far beyond the HUD so it tints the whole view.
         Image flash = CreateImage(hud, "DamageFlash", new Color(1f, 0f, 0f, 0f));
         Stretch(flash.rectTransform);
+        flash.rectTransform.offsetMin = new Vector2(-1500f, -1500f);
+        flash.rectTransform.offsetMax = new Vector2(1500f, 1500f);
 
         Text timer = CreateText(hud, "Timer", "", 44, TextAnchor.MiddleCenter);
         timer.fontStyle = FontStyle.Bold;
@@ -794,13 +797,13 @@ public static class LaserTagSetup
         Place(ranks.rectTransform, 0.03f, 0.16f, 0.1f, 0.82f);
 
         Text names = CreateText(board, "Names", "", 44, TextAnchor.UpperLeft);
-        Place(names.rectTransform, 0.12f, 0.16f, 0.6f, 0.82f);
+        Place(names.rectTransform, 0.12f, 0.16f, 0.55f, 0.82f);
 
         Text scores = CreateText(board, "Scores", "", 44, TextAnchor.UpperCenter);
-        Place(scores.rectTransform, 0.6f, 0.16f, 0.8f, 0.82f);
+        Place(scores.rectTransform, 0.55f, 0.16f, 0.74f, 0.82f);
 
         Text deaths = CreateText(board, "Deaths", "", 44, TextAnchor.UpperCenter);
-        Place(deaths.rectTransform, 0.8f, 0.16f, 0.97f, 0.82f);
+        Place(deaths.rectTransform, 0.74f, 0.16f, 0.98f, 0.82f);
 
         Text footer = CreateText(board, "Footer", "", 30, TextAnchor.MiddleCenter);
         footer.color = new Color(0.8f, 0.85f, 1f);

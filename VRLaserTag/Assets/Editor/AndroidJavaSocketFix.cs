@@ -28,11 +28,24 @@ public class AndroidJavaSocketFix : IPreprocessBuildWithReport, IPostprocessBuil
             report.summary.platform != BuildTarget.Android)
             return;
 
-        string folder = Path.GetFullPath(Path.Combine("Library", "JavaTemp"));
-        Directory.CreateDirectory(folder);
-
         savedTemp = Environment.GetEnvironmentVariable("TEMP");
         savedTmp = Environment.GetEnvironmentVariable("TMP");
+        RedirectTemp();
+    }
+
+    // Unity also runs "gradle --stop" when the Editor closes; redirect then
+    // too so the log does not end with a Gradle error.
+    [InitializeOnLoadMethod]
+    private static void RegisterQuitHandler()
+    {
+        if (Application.platform == RuntimePlatform.WindowsEditor)
+            EditorApplication.quitting += RedirectTemp;
+    }
+
+    private static void RedirectTemp()
+    {
+        string folder = Path.GetFullPath(Path.Combine("Library", "JavaTemp"));
+        Directory.CreateDirectory(folder);
 
         Environment.SetEnvironmentVariable("TEMP", folder);
         Environment.SetEnvironmentVariable("TMP", folder);

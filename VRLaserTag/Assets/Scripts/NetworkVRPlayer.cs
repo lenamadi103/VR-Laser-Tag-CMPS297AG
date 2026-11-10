@@ -9,6 +9,10 @@ public class NetworkVRPlayer : NetworkBehaviour
     // The locally owned player on this device (null until spawned).
     public static NetworkVRPlayer Local { get; private set; }
 
+    // Raised on the owner after its XR Origin was placed at a spawn point
+    // (first spawn, respawn, match start). The VR menu uses it to re-center.
+    public static event System.Action LocalRigPlaced;
+
     // References to the visual parts of the networked player.
     // These objects are children of the NetworkPlayer prefab.
     [Header("Network Avatar")]
@@ -234,6 +238,8 @@ public class NetworkVRPlayer : NetworkBehaviour
             "XR Origin placed at spawn: " +
             pendingSpawnPosition
         );
+
+        LocalRigPlaced?.Invoke();
     }
 
 

@@ -21,6 +21,8 @@ public class SpawnManager : MonoBehaviour
 
     public int SpawnPointCount => spawnPoints != null ? spawnPoints.Length : 0;
 
+    public Transform GetSpawnPoint(int index) => spawnPoints[index];
+
     private void Awake()
     {
         Instance = this;

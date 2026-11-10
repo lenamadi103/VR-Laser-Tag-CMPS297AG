@@ -176,16 +176,31 @@ public class LanConnectionManager : MonoBehaviour
         // or the connection attempt timed out.
         if (!networkManager.IsServer)
         {
-            string reason = networkManager.DisconnectReason;
-
-            SetStatus(string.IsNullOrEmpty(reason)
-                ? "Disconnected. The host left or could not be reached."
-                : "Disconnected: " + reason);
+            SetStatus("Disconnected: " + DescribeDisconnect(networkManager.DisconnectReason));
         }
         else
         {
             StatusChanged?.Invoke();
         }
+    }
+
+    // Turns Netcode's technical disconnect text into a short message for players.
+    // Reasons written by our own approval check ("The game is full") pass through.
+    private static string DescribeDisconnect(string reason)
+    {
+        if (string.IsNullOrEmpty(reason))
+            return "the host left or could not be reached.";
+
+        if (!reason.StartsWith("[Disconnect Event]"))
+            return reason;
+
+        if (reason.Contains("ClosedByRemote"))
+            return "the host closed the game.";
+
+        if (reason.Contains("Timeout"))
+            return "lost connection to the host (timed out). Check the Wi-Fi and the IP address.";
+
+        return "lost connection to the host.";
     }
 
     private void OnTransportFailure()

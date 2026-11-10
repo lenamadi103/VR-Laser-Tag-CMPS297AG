@@ -18,6 +18,12 @@ using UnityEngine;
 //   VRLaserTag.exe -batchmode -nographics -lasertag-client 127.0.0.1 -lasertag-autotest -logFile a.log
 //   VRLaserTag.exe -batchmode -nographics -lasertag-client 127.0.0.1 -lasertag-autotest -lasertag-autotest-leave 25 -logFile b.log
 // For 5 players add "-lasertag-autotest-players 5" to the host and start 4 clients.
+// Other options:
+//   -lasertag-autotest-final N        players expected at the end (default: players - 1;
+//                                     use "players" when a new client rejoins mid-match)
+//   -lasertag-autotest-hostquit S     host closes the session S seconds after a client joined
+//   -lasertag-autotest-expect-hostloss  client passes if it detects the host leaving
+// Every instance logs "FINAL STATE: ..." after the match; the lines must be identical.
 //
 // Timeline (seconds since the match started; all instances share server time):
 //   1-8   Cover test: the host hides behind the centre cover; player 2 shoots at it.
@@ -36,6 +42,13 @@ public class NetworkAutoTest : MonoBehaviour
 
     private float leaveAt = -1f;
     private int expectedPlayers = 3;
+    private int expectedFinalPlayers = -1;
+    private float hostQuitAfter = -1f;
+    private bool expectHostLoss;
+    private bool wasConnected;
+    private bool finished;
+    private bool leftOnPurpose;
+    private bool forcedLateElimination;
     private float nextShotTime;
     private bool simultaneousShotDone;
     private bool coverPositionSet;
@@ -49,6 +62,10 @@ public class NetworkAutoTest : MonoBehaviour
     private bool sawReload;
     private bool sawRespawn;
     private readonly Dictionary<ulong, bool> wasEliminated = new Dictionary<ulong, bool>();
+    private readonly HashSet<ulong> knownPlayers = new HashSet<ulong>();
+    // Players whose position must be on a spawn point at the given time.
+    private readonly List<KeyValuePair<PlayerCombat, float>> spawnChecks = new List<KeyValuePair<PlayerCombat, float>>();
+    private int spawnChecksPassed;
 
     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
     private static void Bootstrap()
@@ -69,6 +86,16 @@ public class NetworkAutoTest : MonoBehaviour
         int playersIndex = Array.IndexOf(args, "-lasertag-autotest-players");
         if (playersIndex >= 0 && playersIndex + 1 < args.Length)
             int.TryParse(args[playersIndex + 1], out test.expectedPlayers);
+
+        int finalIndex = Array.IndexOf(args, "-lasertag-autotest-final");
+        if (finalIndex >= 0 && finalIndex + 1 < args.Length)
+            int.TryParse(args[finalIndex + 1], out test.expectedFinalPlayers);
+
+        int quitIndex = Array.IndexOf(args, "-lasertag-autotest-hostquit");
+        if (quitIndex >= 0 && quitIndex + 1 < args.Length)
+            float.TryParse(args[quitIndex + 1], out test.hostQuitAfter);
+
+        test.expectHostLoss = Array.IndexOf(args, "-lasertag-autotest-expect-hostloss") >= 0;
     }
 
     private void Start()
@@ -79,6 +106,36 @@ public class NetworkAutoTest : MonoBehaviour
     }
 
     private bool IsHost => NetworkManager.Singleton != null && NetworkManager.Singleton.IsServer;
+
+    // Clients: detect losing the host (host quit or crashed).
+    private void Update()
+    {
+        NetworkManager nm = NetworkManager.Singleton;
+        if (finished || nm == null)
+            return;
+
+        if (nm.IsConnectedClient)
+            wasConnected = true;
+
+        if (!wasConnected || leftOnPurpose || nm.IsServer || nm.IsClient)
+            return;
+
+        LanConnectionManager lan = LanConnectionManager.Instance;
+        string status = lan != null ? lan.StatusMessage : "";
+        Log("Lost the host. Lobby status: \"" + status + "\"");
+
+        if (expectHostLoss)
+        {
+            Check(status.StartsWith("Disconnected"), "Lobby did not report the disconnect.");
+            Check(lan != null && !lan.IsBusy, "Client still thinks it is in a session.");
+            Check(PlayerCombat.Local == null, "Local player object still exists after the host left.");
+            Finish(null);
+        }
+        else
+        {
+            Finish("Lost the connection to the host unexpectedly.");
+        }
+    }
 
     private IEnumerator Run()
     {
@@ -96,7 +153,9 @@ public class NetworkAutoTest : MonoBehaviour
         while (MatchManager.Instance == null || !MatchManager.Instance.IsSpawned || PlayerCombat.Local == null)
             yield return null;
 
-        if (IsHost)
+        if (IsHost && hostQuitAfter > 0f)
+            yield return HostQuitRun();
+        else if (IsHost)
             yield return HostRun();
         else
             yield return ClientRun();
@@ -105,6 +164,17 @@ public class NetworkAutoTest : MonoBehaviour
     // ------------------------------------------------------------------
     // Host
     // ------------------------------------------------------------------
+
+    // Host-termination test: wait for a client, then close the session.
+    private IEnumerator HostQuitRun()
+    {
+        yield return new WaitUntil(() => PlayerInfo.All.Count >= 2);
+        yield return new WaitForSeconds(hostQuitAfter);
+        Log("Closing the host session on purpose (host termination test).");
+        leftOnPurpose = true;
+        LanConnectionManager.Instance.Leave();
+        Finish(null);
+    }
 
     private IEnumerator HostRun()
     {
@@ -121,6 +191,9 @@ public class NetworkAutoTest : MonoBehaviour
 
         yield return new WaitForSeconds(2f);
         CheckJoin();
+
+        foreach (PlayerInfo info in PlayerInfo.All)
+            knownPlayers.Add(info.OwnerClientId);
 
         match.ServerStartMatch();
         Check(match.State.Value == MatchState.Countdown, "Match did not enter Countdown after Start.");
@@ -140,12 +213,33 @@ public class NetworkAutoTest : MonoBehaviour
         yield return null;
         CheckResult(match);
 
+        // Nobody may respawn after the match has finished.
+        List<PlayerCombat> eliminatedAtEnd = PlayerCombat.All.FindAll(c => c.IsEliminated.Value);
+        Log("Eliminated at match end: " + eliminatedAtEnd.Count);
+        Check(eliminatedAtEnd.Count > 0, "No player was eliminated at the end (no-respawn check could not run).");
+
+        yield return new WaitForSeconds(1.5f);
+        LogFinalState();
+
+        yield return new WaitForSeconds(3.5f);
+        foreach (PlayerCombat c in eliminatedAtEnd)
+        {
+            // Skip players who already left the session.
+            if (c != null && c.IsSpawned)
+                Check(c.IsEliminated.Value, "A player respawned after the match had finished.");
+        }
+        Log("No-respawn-after-end check done (" + eliminatedAtEnd.Count + " players stayed eliminated).");
+        Check(spawnChecksPassed > 0, "No respawn/join position was verified.");
+        Log("Spawn position checks passed: " + spawnChecksPassed);
+
         // Restart and check the reset.
         match.ServerStartMatch();
         yield return new WaitForSeconds(0.5f);
         Check(match.State.Value == MatchState.Countdown, "Restart did not enter Countdown.");
         CheckAllReset("restart");
 
+        // Give the clients time to check the reset before the session closes.
+        yield return new WaitForSeconds(3f);
         Finish(null);
     }
 
@@ -199,8 +293,41 @@ public class NetworkAutoTest : MonoBehaviour
             {
                 sawRespawn = true;
                 Check(combat.Health.Value == combat.MaxHealth, "Respawned player does not have full health.");
+                spawnChecks.Add(new KeyValuePair<PlayerCombat, float>(combat, Time.time + 1f));
             }
             wasEliminated[combat.OwnerClientId] = combat.IsEliminated.Value;
+        }
+
+        // A player joining during the match.
+        foreach (PlayerInfo info in PlayerInfo.All)
+        {
+            if (knownPlayers.Add(info.OwnerClientId))
+            {
+                Log("Late join during the match: " + info.DisplayName);
+                PlayerCombat joined = FindByClientId(info.OwnerClientId);
+                if (joined != null)
+                    spawnChecks.Add(new KeyValuePair<PlayerCombat, float>(joined, Time.time + 1.5f));
+            }
+        }
+
+        // One second after a respawn/join the player must stand on a spawn point.
+        // The server only accepts positions sent after the owner moved its
+        // XR Origin, so this also proves the local rig was repositioned.
+        for (int i = spawnChecks.Count - 1; i >= 0; i--)
+        {
+            if (Time.time < spawnChecks[i].Value)
+                continue;
+
+            PlayerCombat checkedPlayer = spawnChecks[i].Key;
+            spawnChecks.RemoveAt(i);
+
+            if (checkedPlayer == null || !checkedPlayer.IsSpawned)
+                continue;
+
+            float distance = DistanceToNearestSpawn(checkedPlayer.transform.position);
+            Check(distance < 0.5f, "Player not on a spawn point after respawn/join (" + distance.ToString("0.00") + " m away).");
+            if (distance < 0.5f)
+                spawnChecksPassed++;
         }
 
         foreach (PlayerInfo info in PlayerInfo.All)
@@ -246,7 +373,57 @@ public class NetworkAutoTest : MonoBehaviour
             openPositionSet = true;
         }
 
+        // Just before the end, eliminate one player so the
+        // "no respawn after the match" rule can be checked.
+        if (!forcedLateElimination && elapsed >= MatchSeconds - 1.5f)
+        {
+            forcedLateElimination = true;
+            PlayerCombat victim = PlayerCombat.All.Find(c => c != self && !c.IsEliminated.Value);
+            if (victim != null)
+            {
+                victim.ServerApplyDamage(victim.MaxHealth, null);
+                Log("Eliminated a player just before the end (no-respawn-after-end test).");
+            }
+            return;
+        }
+
         BotFire(elapsed);
+    }
+
+    private static float DistanceToNearestSpawn(Vector3 position)
+    {
+        float best = float.MaxValue;
+        SpawnManager spawns = SpawnManager.Instance;
+
+        for (int i = 0; spawns != null && i < spawns.SpawnPointCount; i++)
+        {
+            Vector3 offset = spawns.GetSpawnPoint(i).position - position;
+            offset.y = 0f;
+            best = Mathf.Min(best, offset.magnitude);
+        }
+
+        return best;
+    }
+
+    // Same text on every instance when the state is consistent.
+    private void LogFinalState()
+    {
+        List<string> parts = new List<string>();
+        List<PlayerInfo> players = new List<PlayerInfo>(PlayerInfo.All);
+        players.Sort((a, b) => a.PlayerNumber.Value.CompareTo(b.PlayerNumber.Value));
+
+        foreach (PlayerInfo info in players)
+        {
+            PlayerCombat combat = FindByClientId(info.OwnerClientId);
+            parts.Add("P" + info.PlayerNumber.Value + " score=" + info.Score.Value + " deaths=" + info.Deaths.Value +
+                      " hp=" + (combat != null ? combat.Health.Value : -1) +
+                      " out=" + (combat != null && combat.IsEliminated.Value));
+        }
+
+        MatchManager match = MatchManager.Instance;
+        PlayerInfo winner = PlayerInfo.FindByClientId(match.WinnerClientId.Value);
+        Log("FINAL STATE: " + string.Join(" | ", parts) + " | winner=" +
+            (match.WinnerClientId.Value == MatchManager.NoWinner ? "tie" : winner != null ? winner.DisplayName : "?"));
     }
 
     private void CheckResult(MatchManager match)
@@ -266,7 +443,8 @@ public class NetworkAutoTest : MonoBehaviour
         Check(maxEliminationsSeen > 0, "No elimination happened during the match.");
         Check(sawRespawn, "No respawn was observed.");
         Check(sawReload, "No reload was observed.");
-        Check(PlayerInfo.All.Count == expectedPlayers - 1, "Disconnected player still listed (" + PlayerInfo.All.Count + " players).");
+        int finalPlayers = expectedFinalPlayers > 0 ? expectedFinalPlayers : expectedPlayers - 1;
+        Check(PlayerInfo.All.Count == finalPlayers, "Expected " + finalPlayers + " players at the end, found " + PlayerInfo.All.Count + ".");
 
         Log("Result: " + match.ResultText.Value);
         foreach (PlayerInfo info in standings)
@@ -293,6 +471,7 @@ public class NetworkAutoTest : MonoBehaviour
             if (leaveAt > 0f && elapsed >= leaveAt)
             {
                 Log("Leaving the session on purpose (disconnect test).");
+                leftOnPurpose = true;
                 LanConnectionManager.Instance.Leave();
                 Finish(null);
                 yield break;
@@ -306,9 +485,26 @@ public class NetworkAutoTest : MonoBehaviour
             yield return null;
         }
 
+        yield return new WaitForSeconds(1.5f);
         Log("Match ended: " + match.ResultText.Value);
-        Log("My final HP " + PlayerCombat.Local.Health.Value + ", ammo " + PlayerCombat.Local.Ammo.Value);
-        yield return new WaitForSeconds(3f);
+        LogFinalState();
+
+        // Stay until the host restarts, then check the reset arrived here too.
+        float restartTimeout = Time.realtimeSinceStartup + 12f;
+        while (match.State.Value != MatchState.Countdown && Time.realtimeSinceStartup < restartTimeout)
+            yield return null;
+
+        leftOnPurpose = true; // the host closes the session after the restart
+        yield return new WaitForSeconds(0.5f);
+
+        PlayerCombat self = PlayerCombat.Local;
+        Check(match.State.Value == MatchState.Countdown, "This client did not see the restart.");
+        Check(self != null && self.Health.Value == self.MaxHealth && self.Ammo.Value == self.MagazineSize &&
+              !self.IsEliminated.Value, "Restart: own health/ammo/elimination not reset on this client.");
+        Check(PlayerInfo.All.TrueForAll(p => p.Score.Value == 0 && p.Deaths.Value == 0),
+              "Restart: scores not reset on this client.");
+        Log("Restart seen on this client; state reset.");
+
         Finish(null);
     }
 
@@ -504,6 +700,10 @@ public class NetworkAutoTest : MonoBehaviour
 
     private void Finish(string fatal)
     {
+        if (finished)
+            return;
+        finished = true;
+
         if (fatal != null)
             failures.Add(fatal);
 

@@ -60,14 +60,18 @@ public class PlayerHUD : MonoBehaviour
         MatchManager match = MatchManager.Instance;
         bool inGame = combat != null && combat.IsSpawned;
 
+        // While the VR menu is open it shows the same information;
+        // hide the big HUD parts so the two do not overlap.
+        bool menuOpen = VRMenuUI.IsVisible;
+
         if (statsGroup != null)
-            statsGroup.SetActive(inGame);
+            statsGroup.SetActive(inGame && !menuOpen);
 
         if (inGame)
             UpdateStats(combat, match);
 
         if (centerText != null)
-            centerText.text = inGame ? BuildCenterMessage(combat, match) : "";
+            centerText.text = inGame && !menuOpen ? BuildCenterMessage(combat, match) : "";
 
         if (feedText != null && feedText.text.Length > 0 && Time.time >= feedHideTime)
             feedText.text = "";

@@ -9,7 +9,7 @@ using UnityEngine.UI;
 // Connected:     shows your player name, the host IP, the match state and
 //                the player list. The host also gets START MATCH / PLAY AGAIN.
 //
-// The panel appears in front of the player. It hides when a match starts
+// The panel appears in front of the player. It hides when the countdown starts
 // and reappears when the match ends. The left controller's menu button
 // (or ` on the keyboard) shows/hides it at any time.
 //
@@ -43,6 +43,9 @@ public class VRMenuUI : MonoBehaviour
     public InputAction toggleAction = new InputAction("Toggle Menu", InputActionType.Button);
 
     private const int MaxAddressLength = 15;
+
+    // True while the menu panel is shown (the HUD hides big messages then).
+    public static bool IsVisible { get; private set; }
 
     private bool visible;
     private float nextRefreshTime;
@@ -78,6 +81,7 @@ public class VRMenuUI : MonoBehaviour
         toggleAction.Enable();
         MatchManager.StateChanged += OnMatchStateChanged;
         LanConnectionManager.StatusChanged += OnConnectionStatusChanged;
+        NetworkVRPlayer.LocalRigPlaced += OnLocalRigPlaced;
     }
 
     private void OnDisable()
@@ -85,6 +89,19 @@ public class VRMenuUI : MonoBehaviour
         toggleAction.Disable();
         MatchManager.StateChanged -= OnMatchStateChanged;
         LanConnectionManager.StatusChanged -= OnConnectionStatusChanged;
+        NetworkVRPlayer.LocalRigPlaced -= OnLocalRigPlaced;
+        IsVisible = false;
+    }
+
+    // The player was moved and turned to a spawn point: bring the panel
+    // back in front of them.
+    private void OnLocalRigPlaced()
+    {
+        if (!visible)
+            return;
+
+        recenterUntil = Time.unscaledTime + 0.5f;
+        Recenter();
     }
 
     private void Start()
@@ -122,6 +139,7 @@ public class VRMenuUI : MonoBehaviour
     {
         bool wasVisible = visible;
         visible = show;
+        IsVisible = show;
 
         if (panelRoot != null)
             panelRoot.SetActive(show);
@@ -194,7 +212,7 @@ public class VRMenuUI : MonoBehaviour
             sessionText.text =
                 "You are " + myName + " (" + role + ")\n" +
                 "Host IP: <b>" + hostIp + "</b>\n\n" +
-                DescribeMatch(match, networkManager.IsServer);
+                DescribeMatch(match, networkManager.IsServer, networkManager.LocalClientId);
         }
 
         if (playersText != null)
@@ -214,7 +232,7 @@ public class VRMenuUI : MonoBehaviour
         }
     }
 
-    private static string DescribeMatch(MatchManager match, bool isHost)
+    private static string DescribeMatch(MatchManager match, bool isHost, ulong localClientId)
     {
         if (match == null || !match.IsSpawned)
             return "Joining the arena...";
@@ -233,7 +251,12 @@ public class VRMenuUI : MonoBehaviour
                 return "Match in progress: " + MatchManager.FormatTime(match.RemainingSeconds) + " left";
 
             case MatchState.Finished:
-                return "<b>MATCH OVER</b>\n" + match.ResultText.Value.ToString() +
+                string headline =
+                    match.WinnerClientId.Value == localClientId ? "<color=#FFD54A><b>YOU WIN!</b></color>" :
+                    match.WinnerClientId.Value == MatchManager.NoWinner ? "<b>MATCH OVER - IT'S A TIE</b>" :
+                    "<b>MATCH OVER</b>";
+
+                return headline + "\n" + match.ResultText.Value.ToString() +
                        (isHost ? "\nPress PLAY AGAIN for another round." : "\nWaiting for the host to restart.");
         }
 
@@ -314,7 +337,9 @@ public class VRMenuUI : MonoBehaviour
 
     private void OnMatchStateChanged(MatchState previous, MatchState current)
     {
-        if (current == MatchState.Playing)
+        // Close the menu when the countdown starts, so players can see the
+        // big countdown on the HUD and get ready.
+        if (current == MatchState.Countdown || current == MatchState.Playing)
             SetVisible(false);
         else if (current == MatchState.Finished)
             SetVisible(true);

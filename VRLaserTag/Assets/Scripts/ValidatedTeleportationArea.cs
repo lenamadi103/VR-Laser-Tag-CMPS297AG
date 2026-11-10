@@ -6,7 +6,8 @@ using UnityEngine.XR.Interaction.Toolkit.Locomotion.Teleportation;
 // - inside the arena,
 // - not inside or touching cover/walls,
 // - not on top of another living player,
-// - not while the local player is eliminated.
+// - not while the local player is eliminated,
+// - not during the pre-match countdown.
 //
 // Invalid spots show the teleport line in its "blocked" style, and a
 // teleport request to an invalid spot is refused.
@@ -74,6 +75,12 @@ public class ValidatedTeleportationArea : TeleportationArea
 
         // Eliminated players wait for the respawn instead of moving.
         if (self != null && self.IsSpawned && self.IsEliminated.Value)
+            return false;
+
+        // During the pre-match countdown everyone stays on their spawn
+        // point, so the match starts from fair positions.
+        MatchManager match = MatchManager.Instance;
+        if (match != null && match.IsSpawned && match.State.Value == MatchState.Countdown)
             return false;
 
         // Stay inside the arena.
