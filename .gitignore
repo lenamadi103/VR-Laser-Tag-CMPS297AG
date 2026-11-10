@@ -113,3 +113,6 @@ InitTestScene*.unity*
 /VRLaserTag/Obj/
 /VRLaserTag/Logs/
 /VRLaserTag/UserSettings/
+
+# Build output of the Unity project (Quest APK, Windows test build)
+VRLaserTag/[Bb]uilds/
