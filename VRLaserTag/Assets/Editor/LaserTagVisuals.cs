@@ -1,10 +1,12 @@
 using System.Collections.Generic;
+using System.IO;
 using Unity.XR.CoreUtils;
 using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine;
 using UnityEngine.Rendering;
 using UnityEngine.Rendering.Universal;
+using UnityEngine.UI;
 
 // Visual redesign of the arena (look only - no gameplay changes).
 //
@@ -12,6 +14,12 @@ using UnityEngine.Rendering.Universal;
 // baked lighting: the real-time sun and its shadows are replaced by
 // lightmaps, light probes (for players and the gun) and one baked
 // reflection probe. Baked light costs nothing per frame on the Quest.
+//
+// "B. Arena Look" gives the arena its sci-fi look: textured floor, wall
+// and cover materials, a ceiling with light fixtures, neon trims, a
+// glowing centre core, numbered spawn pads and wall signs. It then
+// re-bakes the lighting. Neon parts use the cheap Unlit shader (no
+// real lights, no transparency, no post-processing).
 //
 // Everything new is created under the "ArenaDecor" root object, which has
 // no colliders. Gameplay objects (floor, walls, cover, spawn points) are
@@ -37,6 +45,21 @@ public static class LaserTagVisuals
     public static readonly Color AccentOrange = new Color(1f, 0.52f, 0.16f);
     public static readonly Color Background = new Color(0.02f, 0.025f, 0.035f);
 
+    // Arena dimensions (the gameplay walls Cube1-4 are 0.5 m thick at +-7.5).
+    private const float WallInner = 7.25f;
+    private const float WallTop = 3f;
+    private const float CeilingY = 4.5f;
+
+    // Ceiling lamps (baked light + visible light fixture).
+    private static readonly Vector3[] LampPositions =
+    {
+        new Vector3(0f, 4.1f, 0f),
+        new Vector3(4.2f, 4.1f, 4.2f),
+        new Vector3(-4.2f, 4.1f, 4.2f),
+        new Vector3(4.2f, 4.1f, -4.2f),
+        new Vector3(-4.2f, 4.1f, -4.2f),
+    };
+
     // ------------------------------------------------------------------
     // Menu items and command-line entry points
     // ------------------------------------------------------------------
@@ -60,6 +83,28 @@ public static class LaserTagVisuals
     public static void BatchApplyLighting()
     {
         RunAndExit(ApplyLighting);
+    }
+
+    [MenuItem("VR Laser Tag/5. Visual Redesign/B. Arena Look (+ bake)")]
+    public static void ApplyArenaLook()
+    {
+        var scene = EditorSceneManager.OpenScene(ScenePath, OpenSceneMode.Single);
+
+        SetupArenaLook();
+        SetupLighting();
+        ConfigureMobileLighting();
+
+        EditorSceneManager.MarkSceneDirty(scene);
+        EditorSceneManager.SaveScene(scene);
+
+        Bake(scene);
+        AssetDatabase.SaveAssets();
+        Debug.Log("[LaserTagVisuals] Phase B arena look applied and baked.");
+    }
+
+    public static void BatchApplyArenaLook()
+    {
+        RunAndExit(ApplyArenaLook);
     }
 
     private static void RunAndExit(System.Action action)
@@ -153,11 +198,12 @@ public static class LaserTagVisuals
         for (int i = root.childCount - 1; i >= 0; i--)
             Object.DestroyImmediate(root.GetChild(i).gameObject);
 
-        CreateBakedLight(root, "Lamp_Center", new Vector3(0f, 3.4f, 0f), CoolWhite, 7f, 9f);
-        CreateBakedLight(root, "Lamp_NE", new Vector3(4.2f, 3.2f, 4.2f), CoolWhite, 4.5f, 6f);
-        CreateBakedLight(root, "Lamp_NW", new Vector3(-4.2f, 3.2f, 4.2f), CoolWhite, 4.5f, 6f);
-        CreateBakedLight(root, "Lamp_SE", new Vector3(4.2f, 3.2f, -4.2f), CoolWhite, 4.5f, 6f);
-        CreateBakedLight(root, "Lamp_SW", new Vector3(-4.2f, 3.2f, -4.2f), CoolWhite, 4.5f, 6f);
+        // Lamps sit just under the ceiling light fixtures (see LampPositions).
+        CreateBakedLight(root, "Lamp_Center", LampPositions[0], CoolWhite, 16f, 12f);
+        CreateBakedLight(root, "Lamp_NE", LampPositions[1], CoolWhite, 11f, 9f);
+        CreateBakedLight(root, "Lamp_NW", LampPositions[2], CoolWhite, 11f, 9f);
+        CreateBakedLight(root, "Lamp_SE", LampPositions[3], CoolWhite, 11f, 9f);
+        CreateBakedLight(root, "Lamp_SW", LampPositions[4], CoolWhite, 11f, 9f);
 
         CreateBakedLight(root, "Accent_NE", new Vector3(6.6f, 0.5f, 6.6f), AccentBlue, 3f, 4f);
         CreateBakedLight(root, "Accent_SW", new Vector3(-6.6f, 0.5f, -6.6f), AccentBlue, 3f, 4f);
@@ -294,6 +340,7 @@ public static class LaserTagVisuals
         settings.lightmapCompression = LightmapCompression.NormalQuality;
         settings.directionalityMode = LightmapsMode.NonDirectional;
         settings.maxBounces = 2;
+        settings.indirectScale = 1.4f;
         settings.directSampleCount = 32;
         settings.indirectSampleCount = 256;
         settings.environmentSampleCount = 256;
@@ -349,8 +396,593 @@ public static class LaserTagVisuals
     }
 
     // ------------------------------------------------------------------
+    // Phase B - arena look
+    // ------------------------------------------------------------------
+
+    private const string TexturesFolder = "Assets/Textures/Arena";
+    private const string ArenaMaterialsFolder = "Assets/Materials/Arena";
+    private const string MeshesFolder = "Assets/Meshes";
+
+    private const string LitShader = "Universal Render Pipeline/Lit";
+    private const string SimpleLitShader = "Universal Render Pipeline/Simple Lit";
+    private const string UnlitShader = "Universal Render Pipeline/Unlit";
+
+    private static Material matMetal;
+    private static Material matHazard;
+    private static Material neonBlue;
+    private static Material neonBlueDim;
+    private static Material neonOrange;
+    private static Material neonWhite;
+
+    private static void SetupArenaLook()
+    {
+        Directory.CreateDirectory(TexturesFolder);
+        Directory.CreateDirectory(ArenaMaterialsFolder);
+        Directory.CreateDirectory(MeshesFolder);
+
+        Texture2D floorTex = GetOrCreateTexture("FloorPanels", 512, DrawFloorPanels, 4);
+        Texture2D wallTex = GetOrCreateTexture("WallPanels", 512, DrawWallPanels, 2);
+        Texture2D coverTex = GetOrCreateTexture("CoverCrate", 256, DrawCoverCrate, 2);
+        Texture2D hazardTex = GetOrCreateTexture("HazardStripes", 128, DrawHazardStripes, 1);
+
+        // Floor: the only Lit material, so it can show a soft metallic sheen
+        // from the baked reflection probe. Everything else uses Simple Lit.
+        Material floor = GetOrCreateMat("Arena_Floor", LitShader);
+        SetMap(floor, floorTex, new Vector2(6f, 6f), Color.white);
+        floor.SetFloat("_Metallic", 0.3f);
+        floor.SetFloat("_Smoothness", 0.55f);
+
+        Material wall = GetOrCreateMat("Arena_Wall", SimpleLitShader);
+        SetMap(wall, wallTex, new Vector2(6f, 1f), Color.white);
+
+        Material wallUpper = GetOrCreateMat("Arena_WallUpper", SimpleLitShader);
+        SetMap(wallUpper, wallTex, new Vector2(6f, 0.5f), new Color(0.6f, 0.62f, 0.66f));
+
+        Material ceiling = GetOrCreateMat("Arena_Ceiling", SimpleLitShader);
+        SetMap(ceiling, wallTex, new Vector2(5f, 5f), new Color(0.45f, 0.47f, 0.5f));
+
+        Material cover = GetOrCreateMat("Arena_Cover", SimpleLitShader);
+        SetMap(cover, coverTex, Vector2.one, Color.white);
+
+        matMetal = GetOrCreateMat("Arena_Metal", SimpleLitShader);
+        SetMap(matMetal, null, Vector2.one, new Color(0.16f, 0.17f, 0.19f));
+
+        matHazard = GetOrCreateMat("Arena_Hazard", SimpleLitShader);
+        SetMap(matHazard, hazardTex, new Vector2(8f, 1f), Color.white);
+
+        neonBlue = GetOrCreateNeon("Neon_Blue", AccentBlue);
+        neonBlueDim = GetOrCreateNeon("Neon_BlueDim", AccentBlue * 0.55f);
+        neonOrange = GetOrCreateNeon("Neon_Orange", AccentOrange);
+        neonWhite = GetOrCreateNeon("Neon_White", new Color(0.88f, 0.94f, 1f));
+
+        AssignMaterial("Floor", floor);
+        foreach (string name in new[] { "Cube1", "Cube2", "Cube3", "Cube4" })
+            AssignMaterial(name, wall);
+        foreach (string name in new[] { "Cover1", "Cover2", "Cover3", "Cover4", "Cover5" })
+            AssignMaterial(name, cover);
+
+        Transform decor = FindOrCreateRoot(DecorRootName).transform;
+
+        BuildStructure(RecreateChild(decor, "Structure"), wallUpper, ceiling);
+        BuildWallTrims(RecreateChild(decor, "WallTrims"));
+        BuildCoverTrims(RecreateChild(decor, "CoverTrims"));
+        BuildFloorMarkings(RecreateChild(decor, "FloorMarkings"));
+        BuildSigns(RecreateChild(decor, "Signs"));
+
+        AssetDatabase.SaveAssets();
+    }
+
+    // Ceiling, upper wall band, roof beams and light fixtures.
+    // Structure is static and lightmapped; it has no colliders, so it
+    // cannot block shots or teleporting.
+    private static void BuildStructure(Transform root, Material wallUpper, Material ceiling)
+    {
+        float bandHeight = CeilingY - WallTop;
+        float bandY = WallTop + bandHeight / 2f;
+
+        CreateBlock(root, "Ceiling", new Vector3(0f, CeilingY + 0.1f, 0f), new Vector3(15.5f, 0.2f, 15.5f), ceiling, true);
+        CreateBlock(root, "UpperWall_N", new Vector3(0f, bandY, 7.5f), new Vector3(15.5f, bandHeight, 0.5f), wallUpper, true);
+        CreateBlock(root, "UpperWall_S", new Vector3(0f, bandY, -7.5f), new Vector3(15.5f, bandHeight, 0.5f), wallUpper, true);
+        CreateBlock(root, "UpperWall_E", new Vector3(7.5f, bandY, 0f), new Vector3(0.5f, bandHeight, 15.5f), wallUpper, true);
+        CreateBlock(root, "UpperWall_W", new Vector3(-7.5f, bandY, 0f), new Vector3(0.5f, bandHeight, 15.5f), wallUpper, true);
+
+        // Roof beams between the lamps.
+        foreach (float x in new[] { -2.1f, 2.1f })
+            CreateBlock(root, "Beam_X" + x, new Vector3(x, CeilingY - 0.2f, 0f), new Vector3(0.3f, 0.4f, 14.5f), matMetal, true);
+        foreach (float z in new[] { -2.1f, 2.1f })
+            CreateBlock(root, "Beam_Z" + z, new Vector3(0f, CeilingY - 0.15f, z), new Vector3(14.5f, 0.3f, 0.25f), matMetal, true);
+
+        // Light fixtures: dark housing with a glowing panel underneath.
+        for (int i = 0; i < LampPositions.Length; i++)
+        {
+            Vector3 p = LampPositions[i];
+            CreateBlock(root, "Fixture_" + i, new Vector3(p.x, CeilingY - 0.06f, p.z), new Vector3(1.5f, 0.1f, 0.45f), matMetal, false);
+            CreateStrip(root, "FixtureLight_" + i, new Vector3(p.x, CeilingY - 0.115f, p.z), new Vector3(1.35f, 0.02f, 0.32f), neonWhite);
+        }
+    }
+
+    // Neon lines along the walls: base and top strips all around, vertical
+    // strips every few metres, coloured corners matching the baked accents.
+    private static void BuildWallTrims(Transform root)
+    {
+        const float t = 0.04f;
+        float face = WallInner - t / 2f;
+        float length = WallInner * 2f;
+
+        // Base and top strips on the four walls.
+        CreateStrip(root, "Base_N", new Vector3(0f, 0.12f, face), new Vector3(length, t, t), neonBlue);
+        CreateStrip(root, "Base_S", new Vector3(0f, 0.12f, -face), new Vector3(length, t, t), neonBlue);
+        CreateStrip(root, "Base_E", new Vector3(face, 0.12f, 0f), new Vector3(t, t, length), neonBlue);
+        CreateStrip(root, "Base_W", new Vector3(-face, 0.12f, 0f), new Vector3(t, t, length), neonBlue);
+
+        CreateStrip(root, "Top_N", new Vector3(0f, WallTop, face), new Vector3(length, t, t), neonWhite);
+        CreateStrip(root, "Top_S", new Vector3(0f, WallTop, -face), new Vector3(length, t, t), neonWhite);
+        CreateStrip(root, "Top_E", new Vector3(face, WallTop, 0f), new Vector3(t, t, length), neonWhite);
+        CreateStrip(root, "Top_W", new Vector3(-face, WallTop, 0f), new Vector3(t, t, length), neonWhite);
+
+        // Vertical strips at +-4.5 m on every wall (clear of the scoreboards
+        // on the north/south walls and the signs on the east/west walls).
+        float h = WallTop / 2f;
+        foreach (float s in new[] { -4.5f, 4.5f })
+        {
+            CreateStrip(root, "Vert_N" + s, new Vector3(s, h, face), new Vector3(t, WallTop, t), neonBlueDim);
+            CreateStrip(root, "Vert_S" + s, new Vector3(s, h, -face), new Vector3(t, WallTop, t), neonBlueDim);
+            CreateStrip(root, "Vert_E" + s, new Vector3(face, h, s), new Vector3(t, WallTop, t), neonBlueDim);
+            CreateStrip(root, "Vert_W" + s, new Vector3(-face, h, s), new Vector3(t, WallTop, t), neonBlueDim);
+        }
+
+        // Corners: blue on one diagonal, orange on the other.
+        float c = WallInner - 0.05f;
+        CreateStrip(root, "Corner_NE", new Vector3(c, h, c), new Vector3(0.08f, WallTop, 0.08f), neonBlue);
+        CreateStrip(root, "Corner_SW", new Vector3(-c, h, -c), new Vector3(0.08f, WallTop, 0.08f), neonBlue);
+        CreateStrip(root, "Corner_NW", new Vector3(-c, h, c), new Vector3(0.08f, WallTop, 0.08f), neonOrange);
+        CreateStrip(root, "Corner_SE", new Vector3(c, h, -c), new Vector3(0.08f, WallTop, 0.08f), neonOrange);
+    }
+
+    // Glowing edges on every cover block plus a hazard band at the base,
+    // so cover is easy to read. The centre block becomes a glowing core.
+    private static void BuildCoverTrims(Transform root)
+    {
+        foreach (string name in new[] { "Cover1", "Cover2", "Cover3", "Cover4", "Cover5" })
+        {
+            GameObject cover = GameObject.Find(name);
+            Collider collider = cover != null ? cover.GetComponent<Collider>() : null;
+            if (collider == null)
+                continue;
+
+            Bounds b = collider.bounds;
+            bool isCore = Mathf.Abs(b.center.x) < 0.5f && Mathf.Abs(b.center.z) < 0.5f;
+            Material edge = isCore || b.center.x * b.center.z > 0f ? neonBlue : neonOrange;
+
+            Transform group = new GameObject(name + "_Trim").transform;
+            group.SetParent(root, false);
+
+            const float t = 0.035f;
+            const float pad = 0.01f;
+
+            // Vertical edges.
+            foreach (float x in new[] { b.min.x, b.max.x })
+            foreach (float z in new[] { b.min.z, b.max.z })
+                CreateStrip(group, "Edge", new Vector3(x, b.center.y, z), new Vector3(t + pad, b.size.y + pad, t + pad), edge);
+
+            // Top edges.
+            foreach (float z in new[] { b.min.z, b.max.z })
+                CreateStrip(group, "Top", new Vector3(b.center.x, b.max.y, z), new Vector3(b.size.x + pad, t, t), edge);
+            foreach (float x in new[] { b.min.x, b.max.x })
+                CreateStrip(group, "Top", new Vector3(x, b.max.y, b.center.z), new Vector3(t, t, b.size.z + pad), edge);
+
+            // Hazard band around the base.
+            CreateBlock(group, "HazardBand", new Vector3(b.center.x, 0.09f, b.center.z),
+                new Vector3(b.size.x + 0.02f, 0.18f, b.size.z + 0.02f), matHazard, false);
+
+            if (isCore)
+            {
+                CreateStrip(group, "CoreBand", new Vector3(b.center.x, b.center.y, b.center.z),
+                    new Vector3(b.size.x + 0.04f, 0.1f, b.size.z + 0.04f), neonBlue);
+
+                // Halo floating well above head height.
+                CreateRing(group, "CoreHalo", new Vector3(b.center.x, 3.4f, b.center.z), 0.85f, 1.0f, neonBlue, true);
+            }
+        }
+    }
+
+    // Floor lines, a ring around the core and five numbered spawn pads.
+    private static void BuildFloorMarkings(Transform root)
+    {
+        const float y = 0.006f;
+        float border = WallInner - 0.5f;
+
+        CreateStrip(root, "Border_N", new Vector3(0f, y, border), new Vector3(border * 2f, 0.01f, 0.05f), neonBlueDim);
+        CreateStrip(root, "Border_S", new Vector3(0f, y, -border), new Vector3(border * 2f, 0.01f, 0.05f), neonBlueDim);
+        CreateStrip(root, "Border_E", new Vector3(border, y, 0f), new Vector3(0.05f, 0.01f, border * 2f), neonBlueDim);
+        CreateStrip(root, "Border_W", new Vector3(-border, y, 0f), new Vector3(0.05f, 0.01f, border * 2f), neonBlueDim);
+
+        CreateRing(root, "CoreRing", new Vector3(0f, y, 0f), 1.55f, 1.63f, neonBlue, false);
+
+        for (int i = 1; i <= 5; i++)
+        {
+            GameObject spawn = GameObject.Find("SpawnPoint_" + i);
+            if (spawn == null)
+                continue;
+
+            Vector3 p = spawn.transform.position;
+            p.y = y;
+            float yaw = spawn.transform.eulerAngles.y;
+
+            Transform pad = new GameObject("SpawnPad_" + i).transform;
+            pad.SetParent(root, false);
+
+            CreateRing(pad, "Ring", p, 0.46f, 0.52f, neonOrange, false);
+            CreateRing(pad, "InnerRing", p + new Vector3(0f, 0.001f, 0f), 0.3f, 0.32f, neonOrange, false);
+
+            // Number on the floor in front of the pad, upright for the
+            // player standing on it.
+            Vector3 forward = Quaternion.Euler(0f, yaw, 0f) * Vector3.forward;
+            Canvas label = CreateWorldText(pad, "Number", i.ToString("00"), new Vector2(300, 160), 0.003f, 120, AccentOrange);
+            label.transform.SetPositionAndRotation(p + forward * 0.85f + Vector3.up * 0.004f, Quaternion.Euler(90f, yaw, 0f));
+        }
+    }
+
+    // "VR LASER TAG" on the east and west walls (the scoreboards use the
+    // north and south walls).
+    private static void BuildSigns(Transform root)
+    {
+        float x = WallInner - 0.02f;
+
+        foreach (int side in new[] { 1, -1 })
+        {
+            Transform sign = new GameObject(side > 0 ? "Sign_East" : "Sign_West").transform;
+            sign.SetParent(root, false);
+            sign.SetPositionAndRotation(new Vector3(side * x, 2.15f, 0f), Quaternion.Euler(0f, side * 90f, 0f));
+
+            Canvas title = CreateWorldText(sign, "Title", "VR LASER TAG", new Vector2(1600, 260), 0.0025f, 200, AccentBlue);
+            title.GetComponentInChildren<Text>().fontStyle = FontStyle.Bold;
+            title.transform.localPosition = new Vector3(0f, 0.2f, 0f);
+            title.transform.localRotation = Quaternion.identity;
+
+            Canvas subtitle = CreateWorldText(sign, "Subtitle", "FREE  FOR  ALL  ARENA", new Vector2(1600, 120), 0.0025f, 80, AccentOrange);
+            subtitle.transform.localPosition = new Vector3(0f, -0.3f, 0f);
+            subtitle.transform.localRotation = Quaternion.identity;
+
+            // Thin neon underline between the two lines.
+            CreateStrip(sign, "Underline", Vector3.zero, new Vector3(3.2f, 0.03f, 0.02f), neonBlueDim, true);
+        }
+    }
+
+    // ---- building blocks ----
+
+    // Solid block: static, batched; lightmapped when it is big enough to matter.
+    private static void CreateBlock(Transform parent, string name, Vector3 position, Vector3 scale, Material material, bool lightmapped)
+    {
+        GameObject go = GameObject.CreatePrimitive(PrimitiveType.Cube);
+        go.name = name;
+        Object.DestroyImmediate(go.GetComponent<Collider>());
+        go.transform.SetParent(parent, false);
+        go.transform.position = position;
+        go.transform.localScale = scale;
+
+        MeshRenderer renderer = go.GetComponent<MeshRenderer>();
+        renderer.sharedMaterial = material;
+
+        StaticEditorFlags flags = StaticEditorFlags.BatchingStatic | StaticEditorFlags.ReflectionProbeStatic;
+        if (lightmapped)
+        {
+            flags |= StaticEditorFlags.ContributeGI;
+            renderer.receiveGI = ReceiveGI.Lightmaps;
+            renderer.shadowCastingMode = ShadowCastingMode.On;
+        }
+        else
+        {
+            renderer.receiveGI = ReceiveGI.LightProbes;
+            renderer.shadowCastingMode = ShadowCastingMode.Off;
+        }
+
+        GameObjectUtility.SetStaticEditorFlags(go, flags);
+    }
+
+    // Glowing strip (Unlit): static and batched, no lighting or shadows.
+    private static void CreateStrip(Transform parent, string name, Vector3 position, Vector3 scale, Material material, bool local = false)
+    {
+        GameObject go = GameObject.CreatePrimitive(PrimitiveType.Cube);
+        go.name = name;
+        Object.DestroyImmediate(go.GetComponent<Collider>());
+        go.transform.SetParent(parent, false);
+
+        if (local)
+            go.transform.localPosition = position;
+        else
+            go.transform.position = position;
+
+        go.transform.localScale = scale;
+        MakeUnlitStatic(go, material);
+    }
+
+    private static void CreateRing(Transform parent, string name, Vector3 position, float inner, float outer, Material material, bool faceDown)
+    {
+        GameObject go = new GameObject(name);
+        go.transform.SetParent(parent, false);
+        go.transform.position = position;
+
+        go.AddComponent<MeshFilter>().sharedMesh = GetOrCreateRingMesh(inner, outer, faceDown);
+        go.AddComponent<MeshRenderer>();
+        MakeUnlitStatic(go, material);
+    }
+
+    private static void MakeUnlitStatic(GameObject go, Material material)
+    {
+        MeshRenderer renderer = go.GetComponent<MeshRenderer>();
+        renderer.sharedMaterial = material;
+        renderer.shadowCastingMode = ShadowCastingMode.Off;
+        renderer.receiveShadows = false;
+        renderer.receiveGI = ReceiveGI.LightProbes;
+        renderer.lightProbeUsage = LightProbeUsage.Off;
+        renderer.reflectionProbeUsage = ReflectionProbeUsage.Off;
+        GameObjectUtility.SetStaticEditorFlags(go, StaticEditorFlags.BatchingStatic);
+    }
+
+    // Flat ring in the XZ plane, saved as an asset so the scene keeps it.
+    private static Mesh GetOrCreateRingMesh(float inner, float outer, bool faceDown)
+    {
+        string name = "Ring_" + inner.ToString("0.00") + "_" + outer.ToString("0.00") + (faceDown ? "_down" : "_up");
+        string path = MeshesFolder + "/" + name + ".asset";
+
+        Mesh mesh = AssetDatabase.LoadAssetAtPath<Mesh>(path);
+        if (mesh != null)
+            return mesh;
+
+        const int segments = 48;
+        Vector3[] vertices = new Vector3[segments * 2];
+        Vector3[] normals = new Vector3[segments * 2];
+        int[] triangles = new int[segments * 6];
+        Vector3 normal = faceDown ? Vector3.down : Vector3.up;
+
+        for (int i = 0; i < segments; i++)
+        {
+            float a = i * Mathf.PI * 2f / segments;
+            Vector3 dir = new Vector3(Mathf.Cos(a), 0f, Mathf.Sin(a));
+            vertices[i * 2] = dir * inner;
+            vertices[i * 2 + 1] = dir * outer;
+            normals[i * 2] = normal;
+            normals[i * 2 + 1] = normal;
+
+            int next = (i + 1) % segments;
+            int t = i * 6;
+            int i0 = i * 2, o0 = i * 2 + 1, i1 = next * 2, o1 = next * 2 + 1;
+
+            if (faceDown)
+            {
+                triangles[t] = i0; triangles[t + 1] = i1; triangles[t + 2] = o0;
+                triangles[t + 3] = o0; triangles[t + 4] = i1; triangles[t + 5] = o1;
+            }
+            else
+            {
+                triangles[t] = i0; triangles[t + 1] = o0; triangles[t + 2] = i1;
+                triangles[t + 3] = o0; triangles[t + 4] = o1; triangles[t + 5] = i1;
+            }
+        }
+
+        mesh = new Mesh { name = name, vertices = vertices, normals = normals, triangles = triangles };
+        mesh.RecalculateBounds();
+        AssetDatabase.CreateAsset(mesh, path);
+        return mesh;
+    }
+
+    // Non-interactive world-space text (no raycaster, no event camera).
+    private static Canvas CreateWorldText(Transform parent, string name, string content, Vector2 sizePixels, float metresPerPixel, int fontSize, Color color)
+    {
+        GameObject go = new GameObject(name, typeof(RectTransform), typeof(Canvas));
+        go.transform.SetParent(parent, false);
+
+        Canvas canvas = go.GetComponent<Canvas>();
+        canvas.renderMode = RenderMode.WorldSpace;
+
+        RectTransform rect = go.GetComponent<RectTransform>();
+        rect.sizeDelta = sizePixels;
+        rect.localScale = Vector3.one * metresPerPixel;
+
+        GameObject textObject = new GameObject("Text", typeof(RectTransform));
+        textObject.transform.SetParent(go.transform, false);
+
+        RectTransform textRect = textObject.GetComponent<RectTransform>();
+        textRect.anchorMin = Vector2.zero;
+        textRect.anchorMax = Vector2.one;
+        textRect.offsetMin = Vector2.zero;
+        textRect.offsetMax = Vector2.zero;
+
+        Text text = textObject.AddComponent<Text>();
+        text.font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+        text.text = content;
+        text.fontSize = fontSize;
+        text.color = color;
+        text.alignment = TextAnchor.MiddleCenter;
+        text.horizontalOverflow = HorizontalWrapMode.Overflow;
+        text.verticalOverflow = VerticalWrapMode.Overflow;
+        text.raycastTarget = false;
+
+        return canvas;
+    }
+
+    // ---- materials ----
+
+    private static Material GetOrCreateMat(string name, string shaderName)
+    {
+        string path = ArenaMaterialsFolder + "/" + name + ".mat";
+        Shader shader = Shader.Find(shaderName);
+        Material material = AssetDatabase.LoadAssetAtPath<Material>(path);
+
+        if (material == null)
+        {
+            material = new Material(shader);
+            AssetDatabase.CreateAsset(material, path);
+        }
+        else if (material.shader != shader)
+        {
+            material.shader = shader;
+        }
+
+        material.enableInstancing = true;
+        EditorUtility.SetDirty(material);
+        return material;
+    }
+
+    private static Material GetOrCreateNeon(string name, Color color)
+    {
+        Material material = GetOrCreateMat(name, UnlitShader);
+        material.SetColor("_BaseColor", color);
+        return material;
+    }
+
+    private static void SetMap(Material material, Texture2D texture, Vector2 tiling, Color color)
+    {
+        material.SetTexture("_BaseMap", texture);
+        material.SetTextureScale("_BaseMap", tiling);
+        material.SetColor("_BaseColor", color);
+        material.SetFloat("_Smoothness", 0.25f);
+    }
+
+    private static void AssignMaterial(string objectName, Material material)
+    {
+        GameObject go = GameObject.Find(objectName);
+        Renderer renderer = go != null ? go.GetComponent<Renderer>() : null;
+        if (renderer == null)
+            return;
+
+        renderer.sharedMaterial = material;
+        EditorUtility.SetDirty(renderer);
+    }
+
+    // ---- generated textures (small, tileable, saved as PNG) ----
+
+    private delegate Color32 PixelPainter(int x, int y, int size, System.Random random);
+
+    private static Texture2D GetOrCreateTexture(string name, int size, PixelPainter painter, int anisoLevel)
+    {
+        string path = TexturesFolder + "/" + name + ".png";
+
+        // Always regenerate so tweaks to the painters take effect.
+        System.Random random = new System.Random(name.GetHashCode());
+        Texture2D texture = new Texture2D(size, size, TextureFormat.RGBA32, false);
+        Color32[] pixels = new Color32[size * size];
+
+        for (int y = 0; y < size; y++)
+        for (int x = 0; x < size; x++)
+            pixels[y * size + x] = painter(x, y, size, random);
+
+        texture.SetPixels32(pixels);
+        texture.Apply();
+        File.WriteAllBytes(path, texture.EncodeToPNG());
+        Object.DestroyImmediate(texture);
+
+        AssetDatabase.ImportAsset(path, ImportAssetOptions.ForceUpdate);
+        TextureImporter importer = (TextureImporter)AssetImporter.GetAtPath(path);
+        importer.textureType = TextureImporterType.Default;
+        importer.sRGBTexture = true;
+        importer.mipmapEnabled = true;
+        importer.wrapMode = TextureWrapMode.Repeat;
+        importer.filterMode = FilterMode.Trilinear;
+        importer.anisoLevel = anisoLevel;
+        importer.maxTextureSize = size;
+        importer.SaveAndReimport();
+
+        return AssetDatabase.LoadAssetAtPath<Texture2D>(path);
+    }
+
+    private static Color32 Shade(int r, int g, int b, int noise)
+    {
+        return new Color32((byte)Mathf.Clamp(r + noise, 0, 255), (byte)Mathf.Clamp(g + noise, 0, 255),
+                           (byte)Mathf.Clamp(b + noise, 0, 255), 255);
+    }
+
+    // Dark metal floor plates (2 x 2 plates per tile) with seams and bolts.
+    private static Color32 DrawFloorPanels(int x, int y, int size, System.Random random)
+    {
+        int panel = size / 2;
+        int px = x % panel, py = y % panel;
+        int noise = random.Next(-3, 4);
+
+        if (px < 3 || py < 3)
+            return Shade(14, 15, 18, 0);
+        if (px == 3 || py == 3)
+            return Shade(52, 56, 63, 0);
+
+        foreach (int bx in new[] { 14, panel - 14 })
+        foreach (int by in new[] { 14, panel - 14 })
+        {
+            int dx = px - bx, dy = py - by;
+            if (dx * dx + dy * dy <= 9)
+                return Shade(64, 68, 76, noise);
+        }
+
+        // Faint diagonal tread pattern.
+        int tread = ((px + py) / 6) % 6 == 0 ? 4 : 0;
+        return Shade(44 + tread, 47 + tread, 54 + tread, noise);
+    }
+
+    // Wall panels: two panels per tile, horizontal seams and a vent band.
+    private static Color32 DrawWallPanels(int x, int y, int size, System.Random random)
+    {
+        int panel = size / 2;
+        int px = x % panel;
+        int noise = random.Next(-3, 4);
+
+        if (px < 3)
+            return Shade(18, 19, 23, 0);
+        if (px == 3)
+            return Shade(66, 70, 78, 0);
+
+        if ((y >= 96 && y < 99) || (y >= 416 && y < 419))
+            return Shade(20, 21, 25, 0);
+        if (y == 99 || y == 419)
+            return Shade(62, 66, 74, 0);
+
+        bool vent = y >= 30 && y < 86 && px > 36 && px < panel - 36 && (y % 8) < 3;
+        if (vent)
+            return Shade(22, 24, 28, 0);
+
+        return Shade(60, 64, 72, noise);
+    }
+
+    // Crate face: light frame, darker inset panel, two ribs.
+    private static Color32 DrawCoverCrate(int x, int y, int size, System.Random random)
+    {
+        int noise = random.Next(-3, 4);
+        int edge = Mathf.Min(Mathf.Min(x, y), Mathf.Min(size - 1 - x, size - 1 - y));
+
+        if (edge < 3)
+            return Shade(24, 26, 30, 0);
+        if (edge < 20)
+            return Shade(100, 106, 117, noise);
+        if (edge < 23)
+            return Shade(20, 22, 26, 0);
+
+        if ((y >= 84 && y < 90) || (y >= 166 && y < 172))
+            return Shade(84, 89, 99, noise);
+
+        return Shade(60, 65, 74, noise);
+    }
+
+    // Diagonal orange/dark hazard stripes.
+    private static Color32 DrawHazardStripes(int x, int y, int size, System.Random random)
+    {
+        int noise = random.Next(-4, 5);
+        bool orange = ((x + y) / 16) % 2 == 0;
+        return orange ? Shade(205, 112, 32, noise) : Shade(24, 24, 27, noise);
+    }
+
+    // ------------------------------------------------------------------
     // Helpers
     // ------------------------------------------------------------------
+
+    private static Transform RecreateChild(Transform parent, string name)
+    {
+        Transform existing = parent.Find(name);
+        if (existing != null)
+            Object.DestroyImmediate(existing.gameObject);
+
+        GameObject go = new GameObject(name);
+        go.transform.SetParent(parent, false);
+        return go.transform;
+    }
 
     private static void SetBool(SerializedObject so, string property, bool value)
     {

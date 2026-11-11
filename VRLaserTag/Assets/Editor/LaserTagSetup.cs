@@ -546,12 +546,19 @@ public static class LaserTagSetup
         MakeTallCover("Cover2", new Vector3(-3.5f, 1.1f, 3f), new Vector3(2.5f, 2.2f, 0.5f));
         MakeTallCover("Cover5", new Vector3(3.5f, 1.1f, -3f), new Vector3(2.5f, 2.2f, 0.5f));
 
+        // Plain cover material, unless the visual redesign
+        // (LaserTagVisuals) has already given the cover its own material.
         Material coverMaterial = GetOrCreateMaterial("Cover", new Color(0.2f, 0.45f, 0.75f), 0.3f);
         foreach (string name in new[] { "Cover1", "Cover2", "Cover3", "Cover4", "Cover5" })
         {
             GameObject cover = GameObject.Find(name);
-            if (cover != null && cover.GetComponent<Renderer>() != null)
-                cover.GetComponent<Renderer>().sharedMaterial = coverMaterial;
+            Renderer renderer = cover != null ? cover.GetComponent<Renderer>() : null;
+            if (renderer == null)
+                continue;
+
+            Material current = renderer.sharedMaterial;
+            if (current == null || current == coverMaterial || current.name == "Lit")
+                renderer.sharedMaterial = coverMaterial;
         }
     }
 
