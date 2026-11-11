@@ -34,6 +34,107 @@ public static class LaserTagPreview
             EditorApplication.Exit(code);
     }
 
+    // Logs a rough cost summary of ArenaScene (plus one player avatar):
+    // renderers, triangles, materials, textures and an estimate of draw
+    // calls after static batching (static objects that share a material
+    // and lightmap are merged; UI canvases are counted separately).
+    //   Unity.exe -batchmode -projectPath <project> -executeMethod LaserTagPreview.BatchStats
+    public static void BatchStats()
+    {
+        int code = 0;
+        try
+        {
+            LogStats();
+        }
+        catch (System.Exception e)
+        {
+            Debug.LogException(e);
+            code = 1;
+        }
+
+        if (Application.isBatchMode)
+            EditorApplication.Exit(code);
+    }
+
+    private static void LogStats()
+    {
+        EditorSceneManager.OpenScene(ScenePath, OpenSceneMode.Single);
+
+        int renderers = 0, staticRenderers = 0, triangles = 0, transparent = 0;
+        var materials = new System.Collections.Generic.HashSet<Material>();
+        var textures = new System.Collections.Generic.HashSet<Texture>();
+        var staticBatches = new System.Collections.Generic.HashSet<(Material, int)>();
+        int dynamicDraws = 0;
+
+        foreach (MeshRenderer r in Object.FindObjectsByType<MeshRenderer>(FindObjectsInactive.Exclude))
+        {
+            MeshFilter f = r.GetComponent<MeshFilter>();
+            if (!r.enabled || f == null || f.sharedMesh == null)
+                continue;
+
+            renderers++;
+            Mesh mesh = f.sharedMesh;
+            for (int s = 0; s < mesh.subMeshCount; s++)
+                triangles += (int)mesh.GetIndexCount(s) / 3;
+
+            bool isStatic = GameObjectUtility.AreStaticEditorFlagsSet(r.gameObject, StaticEditorFlags.BatchingStatic);
+            if (isStatic)
+                staticRenderers++;
+
+            foreach (Material m in r.sharedMaterials)
+            {
+                if (m == null)
+                    continue;
+
+                materials.Add(m);
+                if (m.renderQueue >= 3000)
+                    transparent++;
+
+                foreach (string name in m.GetTexturePropertyNames())
+                {
+                    Texture t = m.GetTexture(name);
+                    if (t != null)
+                        textures.Add(t);
+                }
+
+                if (isStatic)
+                    staticBatches.Add((m, r.lightmapIndex));
+                else
+                    dynamicDraws++;
+            }
+        }
+
+        int canvases = Object.FindObjectsByType<Canvas>(FindObjectsInactive.Exclude).Length;
+
+        long textureBytes = 0;
+        foreach (Texture t in textures)
+            textureBytes += UnityEngine.Profiling.Profiler.GetRuntimeMemorySizeLong(t);
+
+        long lightmapBytes = 0;
+        foreach (LightmapData map in LightmapSettings.lightmaps)
+        {
+            if (map.lightmapColor != null)
+                lightmapBytes += UnityEngine.Profiling.Profiler.GetRuntimeMemorySizeLong(map.lightmapColor);
+        }
+
+        int realtimeLights = 0;
+        foreach (Light l in Object.FindObjectsByType<Light>(FindObjectsInactive.Exclude))
+        {
+            if (l.lightmapBakeType != LightmapBakeType.Baked)
+                realtimeLights++;
+        }
+
+        Debug.Log("[LaserTagStats] renderers=" + renderers + " (static " + staticRenderers + ")" +
+                  " triangles=" + triangles +
+                  " materials=" + materials.Count + " transparentMaterialSlots=" + transparent +
+                  " estimatedMeshDraws=" + (staticBatches.Count + dynamicDraws) +
+                  " (static batches " + staticBatches.Count + ", dynamic " + dynamicDraws + ")" +
+                  " canvases=" + canvases +
+                  " textures=" + textures.Count + " (~" + textureBytes / 1024 + " KB in Editor)" +
+                  " lightmaps=" + LightmapSettings.lightmaps.Length + " (~" + lightmapBytes / 1024 + " KB in Editor)" +
+                  " realtimeLights=" + realtimeLights);
+    }
+
     private static void Render(string folder)
     {
         Directory.CreateDirectory(folder);
