@@ -107,6 +107,27 @@ public static class LaserTagVisuals
         RunAndExit(ApplyArenaLook);
     }
 
+    [MenuItem("VR Laser Tag/5. Visual Redesign/C. Hands and Gun")]
+    public static void ApplyHandsAndGun()
+    {
+        var scene = EditorSceneManager.OpenScene(ScenePath, OpenSceneMode.Single);
+
+        BuildHandAndGunAssets();
+        SetupLocalGunAndHands();
+
+        EditorSceneManager.MarkSceneDirty(scene);
+        EditorSceneManager.SaveScene(scene);
+
+        SetupAvatarHandsAndGun();
+        AssetDatabase.SaveAssets();
+        Debug.Log("[LaserTagVisuals] Phase C hands and gun applied.");
+    }
+
+    public static void BatchApplyHandsAndGun()
+    {
+        RunAndExit(ApplyHandsAndGun);
+    }
+
     private static void RunAndExit(System.Action action)
     {
         int code = 0;
@@ -855,7 +876,7 @@ public static class LaserTagVisuals
 
     private delegate Color32 PixelPainter(int x, int y, int size, System.Random random);
 
-    private static Texture2D GetOrCreateTexture(string name, int size, PixelPainter painter, int anisoLevel)
+    private static Texture2D GetOrCreateTexture(string name, int size, PixelPainter painter, int anisoLevel, bool effect = false)
     {
         string path = TexturesFolder + "/" + name + ".png";
 
@@ -878,7 +899,8 @@ public static class LaserTagVisuals
         importer.textureType = TextureImporterType.Default;
         importer.sRGBTexture = true;
         importer.mipmapEnabled = true;
-        importer.wrapMode = TextureWrapMode.Repeat;
+        importer.wrapMode = effect ? TextureWrapMode.Clamp : TextureWrapMode.Repeat;
+        importer.alphaIsTransparency = effect;
         importer.filterMode = FilterMode.Trilinear;
         importer.anisoLevel = anisoLevel;
         importer.maxTextureSize = size;
@@ -967,6 +989,556 @@ public static class LaserTagVisuals
         int noise = random.Next(-4, 5);
         bool orange = ((x + y) / 16) % 2 == 0;
         return orange ? Shade(205, 112, 32, noise) : Shade(24, 24, 27, noise);
+    }
+
+    // ------------------------------------------------------------------
+    // Phase C - hands and gun
+    // ------------------------------------------------------------------
+
+    private const string PlayerPrefabPath = "Assets/Prefabs/NetworkPlayer.prefab";
+    private const string ParticlesUnlitShader = "Universal Render Pipeline/Particles/Unlit";
+
+    // The gun handle in gun space (the gun's +Z is the aiming direction).
+    // Gloves are modelled around this handle.
+    private static readonly Matrix4x4 HandleFrame =
+        Matrix4x4.TRS(new Vector3(0f, -0.078f, -0.02f), Quaternion.Euler(20f, 0f, 0f), Vector3.one);
+
+    // Remote avatar hands are spheres scaled 0.12; the remote gun sits
+    // under them at scale 2 (0.24 in hand space).
+    private const float AvatarHandScale = 0.12f;
+
+    private static Mesh gunMesh;
+    private static Mesh gunMeshAvatar;
+    private static Mesh gloveRightMesh;
+    private static Mesh gloveLeftMesh;
+    private static Mesh gloveRightAvatar;
+    private static Mesh gloveLeftAvatar;
+    private static Mesh fxStarMesh;
+    private static Material[] gunMaterials;
+    private static Material[] gloveMaterials;
+    private static Material fxGlow;
+    private static Material fxBeam;
+
+    private static void BuildHandAndGunAssets()
+    {
+        Directory.CreateDirectory(TexturesFolder);
+        Directory.CreateDirectory(ArenaMaterialsFolder);
+        Directory.CreateDirectory(MeshesFolder);
+
+        Material neon = GetOrCreateNeon("Neon_Blue", AccentBlue);
+
+        Material gunBody = GetOrCreateMat("Gun_Body", SimpleLitShader);
+        SetMap(gunBody, null, Vector2.one, new Color(0.28f, 0.3f, 0.34f));
+        Material gunPanel = GetOrCreateMat("Gun_Panel", SimpleLitShader);
+        SetMap(gunPanel, null, Vector2.one, new Color(0.62f, 0.66f, 0.72f));
+        Material glove = GetOrCreateMat("Glove", SimpleLitShader);
+        SetMap(glove, null, Vector2.one, new Color(0.32f, 0.34f, 0.38f));
+
+        gunMaterials = new[] { gunBody, gunPanel, neon };
+        gloveMaterials = new[] { glove, neon };
+
+        Texture2D glowTex = GetOrCreateTexture("FX_Glow", 64, DrawGlow, 0, true);
+        Texture2D beamTex = GetOrCreateTexture("FX_Beam", 64, DrawBeam, 0, true);
+        fxGlow = GetOrCreateAdditive("FX_Glow", glowTex, new Color(0.75f, 0.95f, 1f));
+        fxBeam = GetOrCreateAdditive("FX_LaserBeam", beamTex, Color.white);
+
+        // Gun (3 sub-meshes: body, light panels, glowing accents).
+        MeshBuilder gun = new MeshBuilder(3);
+        AddGun(gun);
+        gunMesh = SaveMesh(gun.ToMesh("Gun_Model", 1f, false, false));
+        gunMeshAvatar = gunMesh;
+
+        // Gloves (2 sub-meshes: glove, glowing accents).
+        MeshBuilder right = new MeshBuilder(2);
+        AddGlove(right, true);
+        gloveRightMesh = SaveMesh(right.ToMesh("Glove_Right", 1f, false, false));
+        gloveRightAvatar = SaveMesh(right.ToMesh("Glove_Right_Avatar", 1f / AvatarHandScale, false, true));
+
+        MeshBuilder left = new MeshBuilder(2);
+        AddGlove(left, false);
+        gloveLeftMesh = SaveMesh(left.ToMesh("Glove_Left", 1f, true, false));
+        gloveLeftAvatar = SaveMesh(left.ToMesh("Glove_Left_Avatar", 1f / AvatarHandScale, true, true));
+
+        fxStarMesh = SaveMesh(CreateStarMesh("FX_Star"));
+    }
+
+    // Low-poly sci-fi pistol in gun space: barrel along +Z, the muzzle
+    // point (shot origin) is at z = 0.32 and is not moved.
+    private static void AddGun(MeshBuilder b)
+    {
+        Matrix4x4 gun = Matrix4x4.identity;
+        const int body = 0, panel = 1, glow = 2;
+
+        b.Box(gun, new Vector3(0f, 0.005f, 0.06f), new Vector3(0.05f, 0.065f, 0.24f), Vector3.zero, body);   // receiver
+        b.Box(gun, new Vector3(0f, 0.045f, 0.06f), new Vector3(0.03f, 0.016f, 0.2f), Vector3.zero, body);   // top rail
+        b.Box(gun, new Vector3(0f, 0.055f, -0.04f), new Vector3(0.022f, 0.016f, 0.02f), Vector3.zero, body); // rear sight
+        b.Box(gun, new Vector3(0f, 0f, 0.235f), new Vector3(0.04f, 0.045f, 0.11f), Vector3.zero, body);      // barrel shroud
+        b.Box(gun, new Vector3(0f, 0f, 0.3f), new Vector3(0.028f, 0.028f, 0.022f), Vector3.zero, body);      // emitter housing
+        b.Box(gun, new Vector3(0f, -0.04f, 0.045f), new Vector3(0.012f, 0.01f, 0.05f), Vector3.zero, body);  // trigger guard
+        b.Box(gun, new Vector3(0f, -0.055f, 0.068f), new Vector3(0.012f, 0.03f, 0.01f), Vector3.zero, body);
+        b.Box(HandleFrame, Vector3.zero, new Vector3(0.034f, 0.11f, 0.05f), Vector3.zero, body);            // grip
+        b.Box(HandleFrame, new Vector3(0f, -0.058f, -0.004f), new Vector3(0.04f, 0.01f, 0.058f), Vector3.zero, body);
+
+        foreach (float side in new[] { -1f, 1f })
+        {
+            b.Box(gun, new Vector3(side * 0.026f, 0.003f, 0.06f), new Vector3(0.004f, 0.04f, 0.16f), Vector3.zero, panel);
+            b.Box(HandleFrame, new Vector3(side * 0.0175f, 0f, 0f), new Vector3(0.003f, 0.08f, 0.036f), Vector3.zero, panel);
+            b.Box(gun, new Vector3(side * 0.0285f, 0.019f, 0.08f), new Vector3(0.002f, 0.006f, 0.12f), Vector3.zero, glow);
+            b.Box(gun, new Vector3(side * 0.0205f, 0.008f, 0.235f), new Vector3(0.002f, 0.005f, 0.08f), Vector3.zero, glow);
+        }
+
+        b.Box(gun, new Vector3(0f, 0.0535f, 0.07f), new Vector3(0.006f, 0.002f, 0.15f), Vector3.zero, glow); // rail light
+        b.Box(gun, new Vector3(0f, 0f, 0.262f), new Vector3(0.044f, 0.049f, 0.006f), Vector3.zero, glow);   // barrel rings
+        b.Box(gun, new Vector3(0f, 0f, 0.282f), new Vector3(0.044f, 0.049f, 0.006f), Vector3.zero, glow);
+        b.Box(gun, new Vector3(0f, 0f, 0.3115f), new Vector3(0.016f, 0.016f, 0.004f), Vector3.zero, glow);  // emitter
+    }
+
+    // Low-poly glove closed around the gun grip (right) or the controller
+    // (left, mirrored later). Modelled in the handle frame: Y along the
+    // grip, Z forward, X to the right.
+    private static void AddGlove(MeshBuilder b, bool holdingGun)
+    {
+        Matrix4x4 h = HandleFrame;
+        const int glove = 0, glow = 1;
+
+        b.Box(h, new Vector3(0.038f, 0f, -0.002f), new Vector3(0.04f, 0.095f, 0.075f), Vector3.zero, glove);   // palm and back of hand
+        b.Box(h, new Vector3(0.012f, -0.005f, -0.04f), new Vector3(0.045f, 0.085f, 0.022f), Vector3.zero, glove); // heel
+        b.Box(h, new Vector3(-0.01f, 0.035f, -0.03f), new Vector3(0.03f, 0.035f, 0.03f), Vector3.zero, glove);   // thumb base
+
+        float[] fingers = holdingGun ? new[] { 0.022f, 0f, -0.022f } : new[] { 0.044f, 0.022f, 0f, -0.022f };
+        foreach (float y in fingers)
+        {
+            b.Box(h, new Vector3(0f, y, 0.036f), new Vector3(0.062f, 0.019f, 0.022f), Vector3.zero, glove);
+            b.Box(h, new Vector3(-0.03f, y, 0.018f), new Vector3(0.02f, 0.019f, 0.034f), Vector3.zero, glove);
+        }
+
+        if (holdingGun)
+        {
+            // Index finger on the trigger, thumb along the left of the frame.
+            b.Box(h, new Vector3(0.012f, 0.048f, 0.035f), new Vector3(0.02f, 0.019f, 0.04f), Vector3.zero, glove);
+            b.Box(h, new Vector3(0f, 0.045f, 0.058f), new Vector3(0.019f, 0.018f, 0.022f), Vector3.zero, glove);
+            b.Box(h, new Vector3(-0.036f, 0.05f, 0.012f), new Vector3(0.018f, 0.02f, 0.06f), new Vector3(0f, 10f, 0f), glove);
+        }
+        else
+        {
+            // Thumb resting on top of the controller.
+            b.Box(h, new Vector3(-0.012f, 0.066f, 0.01f), new Vector3(0.02f, 0.018f, 0.055f), new Vector3(0f, -10f, 0f), glove);
+        }
+
+        b.Box(h, new Vector3(0.025f, -0.055f, -0.045f), new Vector3(0.07f, 0.05f, 0.07f), new Vector3(30f, 0f, 0f), glove); // cuff
+
+        b.Box(h, new Vector3(0.0585f, 0.005f, -0.002f), new Vector3(0.002f, 0.06f, 0.012f), Vector3.zero, glow);          // back-of-hand light
+        b.Box(h, new Vector3(0.025f, -0.04f, -0.037f), new Vector3(0.074f, 0.008f, 0.074f), new Vector3(30f, 0f, 0f), glow); // cuff band
+    }
+
+    private static void SetupLocalGunAndHands()
+    {
+        LaserGunShooting gun = Object.FindAnyObjectByType<LaserGunShooting>(FindObjectsInactive.Include);
+        if (gun == null)
+        {
+            Debug.LogWarning("[LaserTagVisuals] LaserGunShooting not found.");
+            return;
+        }
+
+        Transform gunTransform = gun.transform;
+
+        // Keep the old box gun objects, only stop drawing them.
+        foreach (string part in new[] { "GunBody", "GunHandle" })
+        {
+            Transform t = gunTransform.Find(part);
+            Renderer r = t != null ? t.GetComponent<Renderer>() : null;
+            if (r != null)
+                r.enabled = false;
+        }
+
+        CreateMeshObject(RecreateChild(gunTransform, "GunModel"), gunMesh, gunMaterials);
+
+        // Ammo screen on the back of the gun.
+        Transform ammo = gunTransform.Find("AmmoDisplay");
+        if (ammo != null)
+        {
+            ammo.localPosition = new Vector3(0f, 0.074f, -0.035f);
+            ammo.localRotation = Quaternion.Euler(35f, 0f, 0f);
+        }
+
+        if (gun.laserLine != null)
+            StyleBeam(gun.laserLine);
+
+        GameObject flash = null;
+        if (gun.muzzlePoint != null)
+            flash = CreateFx(RecreateChild(gun.muzzlePoint, "FX"), "MuzzleFlash", 0.07f);
+
+        GameObject spark = CreateFx(RecreateChild(gunTransform, "ImpactFX"), "ImpactSpark", 0.05f);
+
+        LaserFX fx = GetOrAdd<LaserFX>(gunTransform.gameObject);
+        SerializedObject so = new SerializedObject(fx);
+        so.FindProperty("beam").objectReferenceValue = gun.laserLine;
+        so.FindProperty("beamStart").objectReferenceValue = null;
+        so.FindProperty("muzzleFlash").objectReferenceValue = flash;
+        so.FindProperty("impactSpark").objectReferenceValue = spark;
+        so.FindProperty("localPlayerGun").boolValue = true;
+        so.ApplyModifiedPropertiesWithoutUndo();
+
+        // Gloves on the tracked controllers. The old grey sphere hands
+        // (AvatarLeftHand / AvatarRightHand) are no longer drawn.
+        foreach (string sphere in new[] { "AvatarLeftHand", "AvatarRightHand" })
+        {
+            GameObject old = GameObject.Find(sphere);
+            Renderer r = old != null ? old.GetComponent<Renderer>() : null;
+            if (r != null)
+                r.enabled = false;
+        }
+
+        Transform rightHand = gunTransform.parent;
+        if (rightHand != null)
+            CreateMeshObject(RecreateChild(rightHand, "RightGlove"), gloveRightMesh, gloveMaterials);
+
+        XROrigin origin = Object.FindAnyObjectByType<XROrigin>(FindObjectsInactive.Include);
+        Transform leftHand = origin != null ? FindDeep(origin.transform, "Left Hand") : null;
+        if (leftHand != null)
+            CreateMeshObject(RecreateChild(leftHand, "LeftGlove"), gloveLeftMesh, gloveMaterials);
+        else
+            Debug.LogWarning("[LaserTagVisuals] Left Hand not found.");
+    }
+
+    // Other players see the same gloves (in the player's colour) and gun.
+    // Existing objects and renderer lists are kept; only meshes change.
+    private static void SetupAvatarHandsAndGun()
+    {
+        GameObject root = PrefabUtility.LoadPrefabContents(PlayerPrefabPath);
+
+        try
+        {
+            Transform leftHand = FindDeep(root.transform, "NetworkLeftHand");
+            Transform rightHand = FindDeep(root.transform, "NetworkRightHand");
+            Transform networkGun = FindDeep(root.transform, "NetworkGun");
+
+            SetMesh(leftHand, gloveLeftAvatar);
+            SetMesh(rightHand, gloveRightAvatar);
+
+            // The right-hand sphere was hidden behind the gun; the glove
+            // should be visible. (Still hidden for the owner by NetworkVRPlayer.)
+            Renderer rightRenderer = rightHand != null ? rightHand.GetComponent<Renderer>() : null;
+            if (rightRenderer != null)
+                rightRenderer.enabled = true;
+
+            // Tint both gloves with the player's colour.
+            PlayerInfo info = root.GetComponent<PlayerInfo>();
+            if (info != null)
+            {
+                SerializedObject infoSO = new SerializedObject(info);
+                SerializedProperty list = infoSO.FindProperty("colorRenderers");
+                foreach (Transform hand in new[] { leftHand, rightHand })
+                {
+                    Renderer r = hand != null ? hand.GetComponent<Renderer>() : null;
+                    if (r != null && !ContainsObject(list, r))
+                    {
+                        list.arraySize++;
+                        list.GetArrayElementAtIndex(list.arraySize - 1).objectReferenceValue = r;
+                    }
+                }
+                infoSO.ApplyModifiedPropertiesWithoutUndo();
+            }
+
+            if (networkGun != null)
+            {
+                float gunScale = networkGun.lossyScale.x / root.transform.lossyScale.x;
+
+                Transform body = networkGun.Find("GunBody");
+                if (body != null)
+                {
+                    body.localPosition = Vector3.zero;
+                    body.localRotation = Quaternion.identity;
+                    body.localScale = Vector3.one / gunScale;
+                    SetMesh(body, gunMeshAvatar);
+                    body.GetComponent<Renderer>().sharedMaterials = gunMaterials;
+                }
+
+                SetMesh(networkGun.Find("GunHandle"), null);
+                SetMesh(FindDeep(root.transform, "Emitter"), null);
+
+                // Visible gun tip for the remote beam and the effects.
+                Transform tip = RecreateChild(networkGun, "VisualMuzzle");
+                tip.localPosition = new Vector3(0f, 0f, 0.315f / gunScale);
+                tip.localRotation = Quaternion.identity;
+                tip.localScale = Vector3.one / gunScale;
+
+                GameObject flash = CreateFx(tip, "MuzzleFlash", 0.07f);
+                GameObject spark = CreateFx(tip, "ImpactSpark", 0.05f);
+
+                Transform beamObject = FindDeep(root.transform, "RemoteBeam");
+                LineRenderer beam = beamObject != null ? beamObject.GetComponent<LineRenderer>() : null;
+                if (beam != null)
+                    StyleBeam(beam);
+
+                LaserFX fx = GetOrAdd<LaserFX>(networkGun.gameObject);
+                SerializedObject so = new SerializedObject(fx);
+                so.FindProperty("beam").objectReferenceValue = beam;
+                so.FindProperty("beamStart").objectReferenceValue = tip;
+                so.FindProperty("muzzleFlash").objectReferenceValue = flash;
+                so.FindProperty("impactSpark").objectReferenceValue = spark;
+                so.FindProperty("localPlayerGun").boolValue = false;
+                so.ApplyModifiedPropertiesWithoutUndo();
+            }
+
+            PrefabUtility.SaveAsPrefabAsset(root, PlayerPrefabPath);
+        }
+        finally
+        {
+            PrefabUtility.UnloadPrefabContents(root);
+        }
+    }
+
+    private static void StyleBeam(LineRenderer line)
+    {
+        line.sharedMaterial = fxBeam;
+        line.widthMultiplier = 1f;
+        line.widthCurve = new AnimationCurve(new Keyframe(0f, 0.022f), new Keyframe(1f, 0.01f));
+        line.textureMode = LineTextureMode.Stretch;
+        line.alignment = LineAlignment.View;
+        line.numCapVertices = 0;
+        line.shadowCastingMode = ShadowCastingMode.Off;
+        line.receiveShadows = false;
+        line.lightProbeUsage = LightProbeUsage.Off;
+        line.reflectionProbeUsage = ReflectionProbeUsage.Off;
+        line.startColor = Color.white;
+        line.endColor = AccentBlue;
+        EditorUtility.SetDirty(line);
+    }
+
+    // Small additive "star" (three crossed quads), hidden until a shot.
+    private static GameObject CreateFx(Transform parent, string name, float size)
+    {
+        GameObject go = new GameObject(name);
+        go.transform.SetParent(parent, false);
+        go.transform.localScale = Vector3.one * size;
+        go.AddComponent<MeshFilter>().sharedMesh = fxStarMesh;
+
+        MeshRenderer renderer = go.AddComponent<MeshRenderer>();
+        renderer.sharedMaterial = fxGlow;
+        renderer.shadowCastingMode = ShadowCastingMode.Off;
+        renderer.receiveShadows = false;
+        renderer.lightProbeUsage = LightProbeUsage.Off;
+        renderer.reflectionProbeUsage = ReflectionProbeUsage.Off;
+
+        go.SetActive(false);
+        return go;
+    }
+
+    private static void CreateMeshObject(Transform t, Mesh mesh, Material[] materials)
+    {
+        t.localPosition = Vector3.zero;
+        t.localRotation = Quaternion.identity;
+        t.localScale = Vector3.one;
+        t.gameObject.AddComponent<MeshFilter>().sharedMesh = mesh;
+
+        MeshRenderer renderer = t.gameObject.AddComponent<MeshRenderer>();
+        renderer.sharedMaterials = materials;
+        renderer.shadowCastingMode = ShadowCastingMode.Off;
+        renderer.reflectionProbeUsage = ReflectionProbeUsage.Off;
+    }
+
+    private static void SetMesh(Transform t, Mesh mesh)
+    {
+        MeshFilter filter = t != null ? t.GetComponent<MeshFilter>() : null;
+        if (filter != null)
+            filter.sharedMesh = mesh;
+    }
+
+    private static bool ContainsObject(SerializedProperty list, Object value)
+    {
+        for (int i = 0; i < list.arraySize; i++)
+        {
+            if (list.GetArrayElementAtIndex(i).objectReferenceValue == value)
+                return true;
+        }
+        return false;
+    }
+
+    private static Transform FindDeep(Transform root, string name)
+    {
+        if (root.name == name)
+            return root;
+
+        foreach (Transform child in root)
+        {
+            Transform found = FindDeep(child, name);
+            if (found != null)
+                return found;
+        }
+        return null;
+    }
+
+    private static Material GetOrCreateAdditive(string name, Texture2D texture, Color color)
+    {
+        Material material = GetOrCreateMat(name, ParticlesUnlitShader);
+        material.SetTexture("_BaseMap", texture);
+        material.SetColor("_BaseColor", color);
+        material.SetFloat("_Surface", 1f);            // transparent
+        material.SetFloat("_Blend", 2f);              // additive
+        material.SetFloat("_Cull", 0f);               // both sides
+        BaseShaderGUI.SetupMaterialBlendMode(material);
+        EditorUtility.SetDirty(material);
+        return material;
+    }
+
+    private static Mesh SaveMesh(Mesh mesh)
+    {
+        string path = MeshesFolder + "/" + mesh.name + ".asset";
+        Mesh existing = AssetDatabase.LoadAssetAtPath<Mesh>(path);
+
+        if (existing == null)
+        {
+            AssetDatabase.CreateAsset(mesh, path);
+            return mesh;
+        }
+
+        // Update in place so references to the asset stay valid.
+        existing.Clear();
+        EditorUtility.CopySerialized(mesh, existing);
+        Object.DestroyImmediate(mesh);
+        EditorUtility.SetDirty(existing);
+        return existing;
+    }
+
+    private static Mesh CreateStarMesh(string name)
+    {
+        List<Vector3> vertices = new List<Vector3>();
+        List<Vector2> uvs = new List<Vector2>();
+        List<int> triangles = new List<int>();
+
+        Quaternion[] planes = { Quaternion.identity, Quaternion.Euler(0f, 90f, 0f), Quaternion.Euler(90f, 0f, 0f) };
+        foreach (Quaternion q in planes)
+        {
+            int start = vertices.Count;
+            vertices.Add(q * new Vector3(-0.5f, -0.5f, 0f));
+            vertices.Add(q * new Vector3(0.5f, -0.5f, 0f));
+            vertices.Add(q * new Vector3(0.5f, 0.5f, 0f));
+            vertices.Add(q * new Vector3(-0.5f, 0.5f, 0f));
+            uvs.Add(new Vector2(0f, 0f));
+            uvs.Add(new Vector2(1f, 0f));
+            uvs.Add(new Vector2(1f, 1f));
+            uvs.Add(new Vector2(0f, 1f));
+            triangles.AddRange(new[] { start, start + 2, start + 1, start, start + 3, start + 2 });
+        }
+
+        Mesh mesh = new Mesh { name = name };
+        mesh.SetVertices(vertices);
+        mesh.SetUVs(0, uvs);
+        mesh.SetTriangles(triangles, 0);
+        mesh.RecalculateNormals();
+        mesh.RecalculateBounds();
+        return mesh;
+    }
+
+    private static Color32 DrawGlow(int x, int y, int size, System.Random random)
+    {
+        float dx = (x + 0.5f) / size * 2f - 1f;
+        float dy = (y + 0.5f) / size * 2f - 1f;
+        float a = Mathf.Pow(Mathf.Clamp01(1f - Mathf.Sqrt(dx * dx + dy * dy)), 2.2f);
+        return new Color32(255, 255, 255, (byte)(a * 255f));
+    }
+
+    private static Color32 DrawBeam(int x, int y, int size, System.Random random)
+    {
+        float v = Mathf.Abs((y + 0.5f) / size * 2f - 1f);
+        float a = Mathf.Pow(Mathf.Clamp01(1f - v), 2f);
+        return new Color32(255, 255, 255, (byte)(a * 255f));
+    }
+
+    // Builds flat-shaded meshes from boxes (used for the gun and gloves).
+    private class MeshBuilder
+    {
+        private readonly List<Vector3> vertices = new List<Vector3>();
+        private readonly List<Vector3> normals = new List<Vector3>();
+        private readonly List<int>[] triangles;
+
+        private static readonly Vector3[] FaceNormals =
+            { Vector3.right, Vector3.left, Vector3.up, Vector3.down, Vector3.forward, Vector3.back };
+
+        public MeshBuilder(int subMeshCount)
+        {
+            triangles = new List<int>[subMeshCount];
+            for (int i = 0; i < subMeshCount; i++)
+                triangles[i] = new List<int>();
+        }
+
+        public void Box(Matrix4x4 frame, Vector3 center, Vector3 size, Vector3 euler, int subMesh)
+        {
+            Matrix4x4 m = frame * Matrix4x4.TRS(center, Quaternion.Euler(euler), size);
+            Matrix4x4 normalMatrix = m.inverse.transpose;
+
+            foreach (Vector3 d in FaceNormals)
+            {
+                Vector3 u = Mathf.Abs(d.y) > 0.5f ? Vector3.right : Vector3.up;
+                Vector3 w = Vector3.Cross(d, u);
+                Vector3 n = normalMatrix.MultiplyVector(d).normalized;
+
+                int start = vertices.Count;
+                vertices.Add(m.MultiplyPoint3x4(d * 0.5f - u * 0.5f - w * 0.5f));
+                vertices.Add(m.MultiplyPoint3x4(d * 0.5f + u * 0.5f - w * 0.5f));
+                vertices.Add(m.MultiplyPoint3x4(d * 0.5f + u * 0.5f + w * 0.5f));
+                vertices.Add(m.MultiplyPoint3x4(d * 0.5f - u * 0.5f + w * 0.5f));
+                for (int i = 0; i < 4; i++)
+                    normals.Add(n);
+
+                triangles[subMesh].AddRange(new[] { start, start + 1, start + 2, start, start + 2, start + 3 });
+            }
+        }
+
+        // scale: multiplies positions. mirrorX: left-hand copy.
+        // singleSubMesh: merge everything for one-material renderers.
+        public Mesh ToMesh(string name, float scale, bool mirrorX, bool singleSubMesh)
+        {
+            Vector3 flip = mirrorX ? new Vector3(-1f, 1f, 1f) : Vector3.one;
+            List<Vector3> v = new List<Vector3>(vertices.Count);
+            List<Vector3> n = new List<Vector3>(normals.Count);
+
+            for (int i = 0; i < vertices.Count; i++)
+            {
+                v.Add(Vector3.Scale(vertices[i], flip) * scale);
+                n.Add(Vector3.Scale(normals[i], flip));
+            }
+
+            List<List<int>> groups = new List<List<int>>();
+            if (singleSubMesh)
+            {
+                List<int> all = new List<int>();
+                foreach (List<int> t in triangles)
+                    all.AddRange(t);
+                groups.Add(all);
+            }
+            else
+            {
+                foreach (List<int> t in triangles)
+                    groups.Add(new List<int>(t));
+            }
+
+            // Make every triangle face along its normal (fixes winding
+            // after mirroring and for any face orientation).
+            foreach (List<int> t in groups)
+            {
+                for (int i = 0; i < t.Count; i += 3)
+                {
+                    Vector3 face = Vector3.Cross(v[t[i + 1]] - v[t[i]], v[t[i + 2]] - v[t[i]]);
+                    if (Vector3.Dot(face, n[t[i]]) < 0f)
+                    {
+                        int swap = t[i + 1];
+                        t[i + 1] = t[i + 2];
+                        t[i + 2] = swap;
+                    }
+                }
+            }
+
+            Mesh mesh = new Mesh { name = name };
+            mesh.SetVertices(v);
+            mesh.SetNormals(n);
+            mesh.subMeshCount = groups.Count;
+            for (int i = 0; i < groups.Count; i++)
+                mesh.SetTriangles(groups[i], i);
+            mesh.RecalculateBounds();
+            return mesh;
+        }
     }
 
     // ------------------------------------------------------------------
