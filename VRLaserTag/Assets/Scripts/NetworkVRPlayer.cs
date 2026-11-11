@@ -1,10 +1,18 @@
 
 using UnityEngine;
 using Unity.Netcode;
+using Unity.Netcode.Components;
 using Unity.XR.CoreUtils;
 
 public class NetworkVRPlayer : NetworkBehaviour
 {
+    // The locally owned player on this device (null until spawned).
+    public static NetworkVRPlayer Local { get; private set; }
+
+    // Raised on the owner after its XR Origin was placed at a spawn point
+    // (first spawn, respawn, match start). The VR menu uses it to re-center.
+    public static event System.Action LocalRigPlaced;
+
     // References to the visual parts of the networked player.
     // These objects are children of the NetworkPlayer prefab.
     [Header("Network Avatar")]
@@ -28,11 +36,31 @@ public class NetworkVRPlayer : NetworkBehaviour
     // Higher values produce faster but less noticeable smoothing.
     [SerializeField] private float smoothingSpeed = 15f;
 
+    // A root movement larger than this between two updates is treated
+    // as a teleport and is not interpolated on other clients.
+    [SerializeField] private float teleportSnapDistance = 1.5f;
+
+    [Header("Body")]
+
+    // Distance between the top of the body capsule and the headset.
+    // The body capsule stretches with the player's real head height,
+    // so crouching behind cover also makes the body hitbox smaller.
+    [SerializeField] private float neckGap = 0.25f;
+
     // Spawn initialization state.
     // The server assigns the spawn position and sends it to the owner.
     private bool spawnPositionReceived;
     private Vector3 pendingSpawnPosition;
+    private Quaternion pendingSpawnRotation = Quaternion.identity;
+    private int pendingSpawnSequence;
     private bool trackingReady;
+
+    // Every server-side spawn/respawn increases this number.
+    // Tracking updates sent before the owner applied the newest spawn
+    // carry an older number and are ignored by the server, so the avatar
+    // does not jump back to where the player was eliminated.
+    private int ownerSpawnSequence;
+    private int serverSpawnSequence;
 
     // The local XR rig used by the player controlling this avatar.
     private XROrigin xrOrigin;
@@ -41,6 +69,8 @@ public class NetworkVRPlayer : NetworkBehaviour
     private Transform localHead;
     private Transform localLeftHand;
     private Transform localRightHand;
+
+    private NetworkTransform networkTransform;
 
     // Determines when the next network update can be sent.
     private float nextSendTime;
@@ -59,6 +89,16 @@ public class NetworkVRPlayer : NetworkBehaviour
     // Indicates whether a remote avatar has received its first pose.
     private bool hasReceivedPose;
 
+    public XROrigin LocalXROrigin => xrOrigin;
+    public Transform NetworkHead => networkHead;
+    public bool IsTrackingReady => trackingReady;
+
+
+    private void Awake()
+    {
+        networkTransform = GetComponent<NetworkTransform>();
+    }
+
 
     // Called when this player object is spawned on the network.
     // Only the owner connects this networked avatar to a local XR rig.
@@ -66,6 +106,8 @@ public class NetworkVRPlayer : NetworkBehaviour
     {
         if (!IsOwner)
             return;
+
+        Local = this;
 
         // Hide the owner's duplicate networked avatar.
         // The player's local XR rig already provides their own visuals.
@@ -107,6 +149,42 @@ public class NetworkVRPlayer : NetworkBehaviour
     }
 
 
+    public override void OnNetworkDespawn()
+    {
+        if (Local == this)
+            Local = null;
+    }
+
+
+    // Server only. Moves this player to a spawn point:
+    // the networked root moves immediately (without interpolation),
+    // and the owner is told to move their local XR Origin.
+    //
+    // Used for the first spawn, for respawns, and at match start.
+    public void ServerMoveToSpawn(Vector3 position, Quaternion rotation)
+    {
+        if (!IsServer)
+            return;
+
+        serverSpawnSequence++;
+
+        // The root keeps an identity rotation. Head and hand poses are
+        // sent relative to the root, so a fixed root rotation keeps the
+        // math identical on every device.
+        if (networkTransform != null && networkTransform.CanCommitToTransform && IsSpawned)
+            networkTransform.Teleport(position, Quaternion.identity, transform.localScale);
+        else
+            transform.SetPositionAndRotation(position, Quaternion.identity);
+
+        InitializeSpawnRpc(
+            position,
+            rotation,
+            serverSpawnSequence,
+            RpcTarget.Single(OwnerClientId, RpcTargetUse.Temp)
+        );
+    }
+
+
     // Called by the server for the player who owns this avatar.
     // Receives and stores the assigned spawn position.
     //
@@ -115,12 +193,16 @@ public class NetworkVRPlayer : NetworkBehaviour
     [Rpc(SendTo.SpecifiedInParams)]
     public void InitializeSpawnRpc(
         Vector3 spawnPosition,
+        Quaternion spawnRotation,
+        int spawnSequence,
         RpcParams rpcParams = default)
     {
         if (!IsOwner)
             return;
 
         pendingSpawnPosition = spawnPosition;
+        pendingSpawnRotation = spawnRotation;
+        pendingSpawnSequence = spawnSequence;
         spawnPositionReceived = true;
 
         TryInitializeSpawn();
@@ -130,6 +212,8 @@ public class NetworkVRPlayer : NetworkBehaviour
     // Aligns the local XR Origin with the server-assigned spawn.
     // Tracking is enabled only after the spawn position and
     // required XR references are available.
+    //
+    // This runs for the first spawn and for every respawn.
     private void TryInitializeSpawn()
     {
         if (!IsOwner ||
@@ -137,9 +221,60 @@ public class NetworkVRPlayer : NetworkBehaviour
             xrOrigin == null ||
             localHead == null ||
             localLeftHand == null ||
-            localRightHand == null ||
-            trackingReady)
+            localRightHand == null)
             return;
+
+        PlaceLocalRig(pendingSpawnPosition, pendingSpawnRotation);
+
+        spawnPositionReceived = false;
+        ownerSpawnSequence = pendingSpawnSequence;
+
+        // The owner can now start sending tracking information.
+        // Send the new position immediately.
+        trackingReady = true;
+        nextSendTime = 0f;
+
+        Debug.Log(
+            "XR Origin placed at spawn: " +
+            pendingSpawnPosition
+        );
+
+        LocalRigPlaced?.Invoke();
+    }
+
+
+    // Moves the local XR Origin so that the headset stands
+    // horizontally on the spawn point and looks along the spawn's
+    // forward direction. The real room-scale offset is preserved.
+    private void PlaceLocalRig(Vector3 spawnPosition, Quaternion spawnRotation)
+    {
+        CharacterController characterController =
+            xrOrigin.GetComponent<CharacterController>();
+
+        bool controllerWasEnabled =
+            characterController != null && characterController.enabled;
+
+        // A CharacterController can override a direct position change,
+        // so it is disabled while the rig is moved.
+        if (characterController != null)
+            characterController.enabled = false;
+
+        // Turn the rig around the headset so the player faces the
+        // spawn's forward direction (usually the arena centre).
+        Vector3 cameraForward =
+            Vector3.ProjectOnPlane(localHead.forward, Vector3.up);
+
+        Vector3 spawnForward =
+            Vector3.ProjectOnPlane(spawnRotation * Vector3.forward, Vector3.up);
+
+        if (cameraForward.sqrMagnitude > 0.001f &&
+            spawnForward.sqrMagnitude > 0.001f)
+        {
+            float angle =
+                Vector3.SignedAngle(cameraForward, spawnForward, Vector3.up);
+
+            xrOrigin.RotateAroundCameraUsingOriginUp(angle);
+        }
 
         // Calculate the headset's offset from the XR Origin.
         // In VR, the headset may not be directly above the origin.
@@ -148,20 +283,17 @@ public class NetworkVRPlayer : NetworkBehaviour
 
         // Move the XR Origin so the headset starts horizontally
         // at the assigned spawn point.
-        Vector3 originPosition = pendingSpawnPosition;
+        Vector3 originPosition = spawnPosition;
 
         originPosition.x -= headOffset.x;
         originPosition.z -= headOffset.z;
 
         xrOrigin.transform.position = originPosition;
 
-        // The owner can now start sending tracking information.
-        trackingReady = true;
+        Physics.SyncTransforms();
 
-        Debug.Log(
-            "XR Origin initialized at spawn: " +
-            pendingSpawnPosition
-        );
+        if (characterController != null)
+            characterController.enabled = controllerWasEnabled;
     }
 
 
@@ -256,6 +388,7 @@ public class NetworkVRPlayer : NetworkBehaviour
             // Send the player's world position and relative
             // headset/controller poses to the server.
             UpdatePlayerRpc(
+                ownerSpawnSequence,
                 playerPosition,
                 headPos, headRot,
                 leftPos, leftRot,
@@ -320,14 +453,8 @@ public class NetworkVRPlayer : NetworkBehaviour
             t
         );
 
-        // Keep the capsule horizontally underneath
-        // the smoothed headset.
-        Vector3 bodyPosition = playerBody.localPosition;
-
-        bodyPosition.x = networkHead.localPosition.x;
-        bodyPosition.z = networkHead.localPosition.z;
-
-        playerBody.localPosition = bodyPosition;
+        // Keep the capsule underneath the smoothed headset.
+        UpdateBody(networkHead.localPosition);
     }
 
 
@@ -356,14 +483,31 @@ public class NetworkVRPlayer : NetworkBehaviour
             rightRot
         );
 
-        // Position the body underneath the headset.
-        // Keep its original height above the root.
-        Vector3 bodyPosition = playerBody.localPosition;
+        UpdateBody(headPos);
+    }
 
-        bodyPosition.x = headPos.x;
-        bodyPosition.z = headPos.z;
 
-        playerBody.localPosition = bodyPosition;
+    // Positions the body capsule underneath the headset and stretches
+    // it from the floor to just below the head. The capsule is also
+    // the body hitbox, so this keeps shots at chest height accurate.
+    private void UpdateBody(Vector3 headLocalPosition)
+    {
+        if (playerBody == null)
+            return;
+
+        // A Unity capsule is 2 units tall at scale 1.
+        float bodyTop = Mathf.Max(0.5f, headLocalPosition.y - neckGap);
+        float halfHeight = bodyTop * 0.5f;
+
+        Vector3 bodyScale = playerBody.localScale;
+        bodyScale.y = halfHeight;
+        playerBody.localScale = bodyScale;
+
+        playerBody.localPosition = new Vector3(
+            headLocalPosition.x,
+            halfHeight,
+            headLocalPosition.z
+        );
     }
 
 
@@ -374,17 +518,42 @@ public class NetworkVRPlayer : NetworkBehaviour
     // that root position with the other clients.
     //
     // Head and hand poses are forwarded separately by RPC.
-    [Rpc(SendTo.Server)]
+    //
+    // Sent unreliably: a lost tracking packet is replaced 50 ms
+    // later by a newer one, and resending old poses would only
+    // add delay on busy Wi-Fi.
+    [Rpc(SendTo.Server, Delivery = RpcDelivery.Unreliable)]
     private void UpdatePlayerRpc(
+        int spawnSequence,
         Vector3 playerPosition,
         Vector3 headPos, Quaternion headRot,
         Vector3 leftPos, Quaternion leftRot,
-        Vector3 rightPos, Quaternion rightRot)
+        Vector3 rightPos, Quaternion rightRot,
+        RpcParams rpcParams = default)
     {
+        // Only the owner may move this avatar.
+        if (rpcParams.Receive.SenderClientId != OwnerClientId)
+            return;
+
+        // Ignore updates sent before the owner applied the latest
+        // spawn/respawn position.
+        if (spawnSequence != serverSpawnSequence)
+            return;
+
         // Update the server's authoritative root transform.
         // This currently trusts the position reported by
         // the owning client.
-        transform.position = playerPosition;
+        //
+        // Large jumps (teleports) are sent without interpolation
+        // so other players see a clean teleport, not a slide.
+        bool isTeleport =
+            (playerPosition - transform.position).sqrMagnitude >
+            teleportSnapDistance * teleportSnapDistance;
+
+        if (isTeleport && networkTransform != null && networkTransform.CanCommitToTransform)
+            networkTransform.Teleport(playerPosition, Quaternion.identity, transform.localScale);
+        else
+            transform.position = playerPosition;
 
         // For a remote player on the server, store the
         // received tracking pose for visual smoothing.
@@ -412,7 +581,7 @@ public class NetworkVRPlayer : NetworkBehaviour
     //
     // Ignore the locally owned player because its avatar
     // already follows the real headset and controllers.
-    [Rpc(SendTo.NotServer)]
+    [Rpc(SendTo.NotServer, Delivery = RpcDelivery.Unreliable)]
     private void ApplyPoseClientRpc(
         Vector3 headPos, Quaternion headRot,
         Vector3 leftPos, Quaternion leftRot,
