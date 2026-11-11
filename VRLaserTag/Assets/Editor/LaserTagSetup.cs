@@ -12,6 +12,7 @@ using UnityEditor.XR.Management.Metadata;
 using UnityEditor.XR.OpenXR.Features;
 using UnityEngine;
 using UnityEngine.EventSystems;
+using UnityEngine.InputSystem;
 using UnityEngine.Rendering;
 using UnityEngine.Rendering.Universal;
 using UnityEngine.UI;
@@ -421,6 +422,7 @@ public static class LaserTagSetup
             ray.raycastMask = ray.raycastMask & ~ignore;
             EditorUtility.SetDirty(ray);
             PrefabUtility.RecordPrefabInstancePropertyModifications(ray);
+            AssignUIPressInput(ray);
         }
 
         // Keep the XR Device Simulator for Editor/desktop testing only.
@@ -429,6 +431,37 @@ public static class LaserTagSetup
             if (t.parent == null && t.name.StartsWith("XR Device Simulator"))
                 GetOrAdd<DisableWhenHeadsetActive>(t.gameObject);
         }
+    }
+
+    // A ray only clicks UI buttons through its "UI Press" input. If that is
+    // empty, the trigger never presses menu buttons. Use the UI Press action
+    // from the same action map as the ray's Select (e.g. "XRI Right Interaction").
+    private static void AssignUIPressInput(XRRayInteractor ray)
+    {
+        SerializedObject so = new SerializedObject(ray);
+        SerializedProperty select = so.FindProperty("m_SelectInput.m_InputActionReferencePerformed");
+        SerializedProperty pressPerformed = so.FindProperty("m_UIPressInput.m_InputActionReferencePerformed");
+        SerializedProperty pressValue = so.FindProperty("m_UIPressInput.m_InputActionReferenceValue");
+
+        InputActionReference selectRef = select != null ? select.objectReferenceValue as InputActionReference : null;
+        if (selectRef == null || selectRef.action == null || pressPerformed == null || pressPerformed.objectReferenceValue != null)
+            return;
+
+        string mapName = selectRef.action.actionMap.name;
+
+        foreach (Object asset in AssetDatabase.LoadAllAssetsAtPath(AssetDatabase.GetAssetPath(selectRef)))
+        {
+            InputActionReference reference = asset as InputActionReference;
+            if (reference == null || reference.action == null || reference.action.actionMap.name != mapName)
+                continue;
+
+            if (reference.action.name == "UI Press")
+                pressPerformed.objectReferenceValue = reference;
+            else if (reference.action.name == "UI Press Value" && pressValue != null)
+                pressValue.objectReferenceValue = reference;
+        }
+
+        so.ApplyModifiedPropertiesWithoutUndo();
     }
 
     private static void SetupTeleportArea()
