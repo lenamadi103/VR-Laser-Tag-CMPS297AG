@@ -148,3 +148,55 @@ Each log ends with `AUTOTEST RESULT: PASS` or `FAIL (...)`. Extra options: `-las
 VRLaserTag.exe -screen-fullscreen 0 -screen-width 1280 -screen-height 720 -lasertag-screenshots C:\shots
 ```
 The latest screenshots are in `Builds/Screenshots/` (useful for the report).
+
+---
+
+## 7. Visual redesign (branch `feature/visual-redesign`)
+
+**Goal:** make the game look like a polished futuristic free-for-all arena **without** changing gameplay and **without** lowering performance. The game was already free-for-all (individual scores, five player colours, no teams), so no gameplay logic changed. Networking, shooting, hit detection, damage, scoring, respawn, teleport and spawn points are untouched; arena objects (floor, walls, cover, spawn points) keep their positions, sizes and colliders.
+
+### What changed
+
+| Phase | Result |
+|---|---|
+| A. Lighting | Real-time sun and its shadows replaced by **baked** lighting: lightmaps, 9 baked lamps/corner accents (blue and orange on diagonals, so no "team side"), a light-probe grid for players and the gun, one baked reflection probe. Dark solid background instead of the sky. Quest renderer: real-time shadows, mixed lighting, probe blending and light layers off. |
+| B. Arena look | Metal floor plates, panelled walls with vents, crate-style cover (small generated textures), ceiling with beams and light fixtures, upper wall band, neon trims on walls and cover, hazard bands, glowing centre core, numbered spawn pads 01–05, "VR LASER TAG / FREE FOR ALL ARENA" signs. Decoration has **no colliders**. |
+| C. Hands and gun | Low-poly gloves on both controllers (right hand grips the gun), new low-poly laser pistol with glowing accents, ammo screen on the back of the gun. `LaserFX` (visual only): muzzle flash, impact spark, beam tinted with the shooter's player colour. Other players get player-coloured gloves and the same gun. The shot origin (`MuzzlePoint`) and the server's fallback muzzle are unchanged. |
+| D. HUD and leaderboard | Head-locked HUD with small edge panels (FREE FOR ALL + timer, name/rank/score, health, ammo); red edge vignette when hit instead of a full-screen tint; wall leaderboards RANK / PLAYER / SCORE with the leader in gold and "(you)" on your row; `PlayerNameLabel` name tags above other players; menu in the arena colours. |
+
+### How to re-apply
+
+Menu **VR Laser Tag → 5. Visual Redesign**, in order: **A. Lighting (bake)**, **B. Arena Look (+ bake)**, **C. Hands and Gun**, **D. HUD, Leaderboard and Name Labels**. Every step is safe to run again. Running **1. Setup Scene and Prefab** afterwards keeps the redesign (it no longer resets cover materials, moves the server muzzle or drops the right glove's colour).
+
+Command line (Unity closed): `Unity.exe -batchmode -projectPath VRLaserTag -executeMethod LaserTagVisuals.BatchApplyLighting` (likewise `BatchApplyArenaLook`, `BatchApplyHandsAndGun`, `BatchApplyHudAndLabels`). Do not use `-nographics` for the bake steps.
+
+### Files
+
+- New editor tools: `Editor/LaserTagVisuals.cs` (all phases), `Editor/LaserTagPreview.cs` (renders hand/gun/avatar previews: `-executeMethod LaserTagPreview.BatchRender -previewOut <folder>`; scene cost summary: `LaserTagPreview.BatchStats`), `Editor/StripSimulatorFromQuestBuild.cs`.
+- New runtime scripts (visual only): `Scripts/LaserFX.cs`, `Scripts/PlayerNameLabel.cs`.
+- Changed for formatting only: `Scripts/PlayerHUD.cs`, `Scripts/ScoreboardUI.cs`. Layout changes in `Editor/LaserTagSetup.cs` (HUD, leaderboards, menu colours).
+- New assets: `Materials/Arena/`, `Textures/Arena/`, `Textures/HUD/`, `Meshes/`, `Settings/ArenaLighting.lighting`, `ArenaScene/` (lightmaps, reflection probe).
+
+### Performance
+
+Measured on **Quest 3**, one player in the lobby, about 40–100 s each, from the headset's own `VrApi` log (via `adb logcat`):
+
+| Build | Frame rate | GPU time per frame | GPU load |
+|---|---|---|---|
+| Before the redesign | 72 (steady) | 2.68 ms | 30% |
+| After A (baked lighting) | 72 | 2.11 ms | 23% |
+| After B (arena look) | 72 | 2.45 ms | 28% |
+| After C (hands and gun) | 72 | 2.37 ms | 26% |
+| After D (HUD) – final | 72 | **2.12 ms** | **23%** |
+
+Scene cost (editor count, `LaserTagPreview.BatchStats`): before – 15 renderers, about 2,600 triangles, 1 real-time light with soft shadows (most objects drawn twice). After – 116 renderers (113 static-batched), about 3,200 triangles, about 21 mesh draws after batching, 14 materials, no transparent materials in the arena, 4 small textures (≤ 512 px), 2 small lightmaps, **no real-time lights**.
+
+### Verified / not verified
+
+- ✅ Compiles; Windows and Quest builds succeed; automated 3-player and 5-player matches pass (identical final state on every client); UI screenshots and hand/gun/avatar previews reviewed; each phase viewed on a Quest 3.
+- ❌ Not yet verified: **Quest 2 frame rate**, a real multiplayer match on headsets (name tags, in-match HUD, coloured beams and muzzle flash have only been seen in Editor previews and Windows screenshots), mixed Quest 2 + Quest 3 session.
+
+### Quest fixes found during the first headset test (on `feature/complete-gameplay`)
+
+- **Controllers and gun not showing:** the XR Device Simulator started on the headset before it was removed and deleted the real headset from the Input System. It now turns off before any other script runs (`DisableWhenHeadsetActive`), and Quest builds strip it from the scene (`StripSimulatorFromQuestBuild`).
+- **Menu buttons could not be clicked:** the right controller ray had no "UI Press" input. It is now wired, and the setup script assigns it automatically.
