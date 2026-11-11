@@ -128,6 +128,23 @@ public static class LaserTagVisuals
         RunAndExit(ApplyHandsAndGun);
     }
 
+    // The HUD, wall leaderboards and menu are built by LaserTagSetup (their
+    // single source); this re-runs that setup and adds name labels.
+    [MenuItem("VR Laser Tag/5. Visual Redesign/D. HUD, Leaderboard and Name Labels")]
+    public static void ApplyHudAndLabels()
+    {
+        CreateDamageVignette();
+        LaserTagSetup.SetupSceneAndPrefab();
+        SetupNameLabels();
+        AssetDatabase.SaveAssets();
+        Debug.Log("[LaserTagVisuals] Phase D HUD, leaderboard and name labels applied.");
+    }
+
+    public static void BatchApplyHudAndLabels()
+    {
+        RunAndExit(ApplyHudAndLabels);
+    }
+
     private static void RunAndExit(System.Action action)
     {
         int code = 0;
@@ -1538,6 +1555,104 @@ public static class LaserTagVisuals
                 mesh.SetTriangles(groups[i], i);
             mesh.RecalculateBounds();
             return mesh;
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Phase D - name labels
+    // ------------------------------------------------------------------
+
+    // Damage flash texture: clear in the middle, red only towards the edges
+    // of the view, so taking a hit never blocks aiming. LaserTagSetup
+    // assigns it to the HUD's DamageFlash image.
+    public const string DamageVignettePath = "Assets/Textures/HUD/DamageVignette.png";
+
+    private static void CreateDamageVignette()
+    {
+        string folder = Path.GetDirectoryName(DamageVignettePath);
+        Directory.CreateDirectory(folder);
+
+        const int size = 128;
+        Texture2D texture = new Texture2D(size, size, TextureFormat.RGBA32, false);
+        for (int y = 0; y < size; y++)
+        for (int x = 0; x < size; x++)
+        {
+            float dx = (x + 0.5f) / size * 2f - 1f;
+            float dy = (y + 0.5f) / size * 2f - 1f;
+            float r = Mathf.Sqrt(dx * dx + dy * dy);
+            float a = Mathf.SmoothStep(0f, 1f, Mathf.InverseLerp(0.3f, 0.95f, r));
+            texture.SetPixel(x, y, new Color(1f, 1f, 1f, a));
+        }
+        texture.Apply();
+        File.WriteAllBytes(DamageVignettePath, texture.EncodeToPNG());
+        Object.DestroyImmediate(texture);
+
+        AssetDatabase.ImportAsset(DamageVignettePath, ImportAssetOptions.ForceUpdate);
+        TextureImporter importer = (TextureImporter)AssetImporter.GetAtPath(DamageVignettePath);
+        importer.textureType = TextureImporterType.Sprite;
+        importer.alphaIsTransparency = true;
+        importer.mipmapEnabled = false;
+        importer.wrapMode = TextureWrapMode.Clamp;
+        importer.maxTextureSize = size;
+        importer.SaveAndReimport();
+    }
+
+    // "PLAYER 3" tag above every other player's head, in their colour.
+    private static void SetupNameLabels()
+    {
+        GameObject root = PrefabUtility.LoadPrefabContents(PlayerPrefabPath);
+
+        try
+        {
+            Transform head = FindDeep(root.transform, "NetworkHead");
+
+            Transform existing = root.transform.Find("NameLabel");
+            if (existing != null)
+                Object.DestroyImmediate(existing.gameObject);
+
+            Canvas canvas = CreateWorldText(root.transform, "NameLabel", "PLAYER", new Vector2(420, 96), 0.0016f, 60, Color.white);
+            Text text = canvas.GetComponentInChildren<Text>();
+            text.fontStyle = FontStyle.Bold;
+
+            // Dark translucent tag behind the name with a thin blue line.
+            GameObject background = new GameObject("Background", typeof(RectTransform));
+            background.transform.SetParent(canvas.transform, false);
+            background.transform.SetAsFirstSibling();
+            RectTransform bgRect = background.GetComponent<RectTransform>();
+            bgRect.anchorMin = new Vector2(0.08f, 0.05f);
+            bgRect.anchorMax = new Vector2(0.92f, 0.95f);
+            bgRect.offsetMin = Vector2.zero;
+            bgRect.offsetMax = Vector2.zero;
+            Image bg = background.AddComponent<Image>();
+            bg.color = new Color(0.03f, 0.05f, 0.09f, 0.6f);
+            bg.raycastTarget = false;
+
+            GameObject line = new GameObject("Accent", typeof(RectTransform));
+            line.transform.SetParent(background.transform, false);
+            RectTransform lineRect = line.GetComponent<RectTransform>();
+            lineRect.anchorMin = new Vector2(0f, 0f);
+            lineRect.anchorMax = new Vector2(1f, 0.06f);
+            lineRect.offsetMin = Vector2.zero;
+            lineRect.offsetMax = Vector2.zero;
+            Image lineImage = line.AddComponent<Image>();
+            lineImage.color = AccentBlue;
+            lineImage.raycastTarget = false;
+
+            canvas.transform.localPosition = new Vector3(0f, 2f, 0f);
+            canvas.gameObject.SetActive(false);
+
+            PlayerNameLabel label = GetOrAdd<PlayerNameLabel>(root);
+            SerializedObject so = new SerializedObject(label);
+            so.FindProperty("head").objectReferenceValue = head;
+            so.FindProperty("label").objectReferenceValue = canvas.gameObject;
+            so.FindProperty("labelText").objectReferenceValue = text;
+            so.ApplyModifiedPropertiesWithoutUndo();
+
+            PrefabUtility.SaveAsPrefabAsset(root, PlayerPrefabPath);
+        }
+        finally
+        {
+            PrefabUtility.UnloadPrefabContents(root);
         }
     }
 

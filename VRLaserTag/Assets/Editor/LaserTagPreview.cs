@@ -79,6 +79,25 @@ public static class LaserTagPreview
         aLeft.localPosition = new Vector3(-0.24f, 1.25f, 0.3f);
         aLeft.localRotation = Quaternion.Euler(10f, 10f, 0f);
 
+        // Name tag as PlayerNameLabel shows it in play.
+        Transform nameLabel = FindDeep(avatar.transform, "NameLabel");
+        if (nameLabel != null)
+        {
+            nameLabel.gameObject.SetActive(true);
+            UnityEngine.UI.Text labelText = nameLabel.GetComponentInChildren<UnityEngine.UI.Text>();
+            labelText.text = "PLAYER 2";
+            labelText.color = color;
+            nameLabel.position = FindDeep(avatar.transform, "NetworkHead").position + Vector3.up * 0.32f;
+        }
+
+        Place(camera.transform, new Vector3(-0.3f, 1.55f, -4.3f), Quaternion.identity);
+        if (nameLabel != null)
+        {
+            Vector3 away = nameLabel.position - camera.transform.position;
+            away.y = 0f;
+            nameLabel.rotation = Quaternion.LookRotation(away, Vector3.up);
+        }
+
         Transform tip = FindDeep(avatar.transform, "VisualMuzzle");
         Transform flash = FindDeep(avatar.transform, "MuzzleFlash");
         if (flash != null)
