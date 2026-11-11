@@ -1,9 +1,11 @@
+using Unity.Netcode;
 using UnityEngine;
 using UnityEngine.UI;
 
-// Large scoreboard mounted on an arena wall.
-// Shows the match state and timer, the standings (score and deaths),
-// and the result when the match ends. Read-only.
+// Large free-for-all leaderboard mounted on an arena wall.
+// Shows the match state and timer, the standings (rank, player, score;
+// deaths only if a deaths column is assigned), and the result when the
+// match ends. Read-only.
 public class ScoreboardUI : MonoBehaviour
 {
     [SerializeField] private Text headerText;
@@ -42,15 +44,21 @@ public class ScoreboardUI : MonoBehaviour
 
         SetText(headerText, DescribeState(match));
 
+        // Free-for-all leaderboard: the leader is shown in gold and the
+        // viewer's own row is marked "(you)".
         var standings = MatchManager.GetStandings();
-        string ranks = "#\n", names = "PLAYER\n", scores = "SCORE\n", deaths = "DEATHS\n";
+        string ranks = Column("RANK"), names = Column("PLAYER"), scores = Column("SCORE"), deaths = Column("DEATHS");
+        ulong localId = NetworkManager.Singleton != null ? NetworkManager.Singleton.LocalClientId : ulong.MaxValue;
 
         for (int i = 0; i < standings.Count; i++)
         {
             PlayerInfo info = standings[i];
-            ranks += (i + 1) + "\n";
-            names += info.ColoredName + "\n";
-            scores += info.Score.Value + "\n";
+            bool leader = i == 0 && info.Score.Value > 0;
+            string you = info.OwnerClientId == localId ? "  <color=#9FB3C8>(you)</color>" : "";
+
+            ranks += (leader ? Gold(i + 1) : (i + 1).ToString()) + "\n";
+            names += info.ColoredName + you + "\n";
+            scores += (leader ? Gold(info.Score.Value) : info.Score.Value.ToString()) + "\n";
             deaths += info.Deaths.Value + "\n";
         }
 
@@ -79,6 +87,16 @@ public class ScoreboardUI : MonoBehaviour
         }
 
         return "";
+    }
+
+    private static string Column(string title)
+    {
+        return "<size=30><color=#7F93A8>" + title + "</color></size>\n";
+    }
+
+    private static string Gold(int value)
+    {
+        return "<color=#FFD54A><b>" + value + "</b></color>";
     }
 
     private static void SetText(Text text, string value)

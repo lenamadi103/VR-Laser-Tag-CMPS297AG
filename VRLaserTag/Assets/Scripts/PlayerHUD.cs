@@ -91,7 +91,7 @@ public class PlayerHUD : MonoBehaviour
         float healthFraction = combat.MaxHealth > 0 ? (float)combat.Health.Value / combat.MaxHealth : 0f;
 
         if (healthText != null)
-            healthText.text = "HP " + combat.Health.Value + " / " + combat.MaxHealth;
+            healthText.text = "HP  " + combat.Health.Value;
 
         if (healthBar != null)
         {
@@ -104,9 +104,9 @@ public class PlayerHUD : MonoBehaviour
         if (ammoText != null)
         {
             if (combat.IsReloading.Value)
-                ammoText.text = "RELOADING...";
+                ammoText.text = "RELOADING";
             else
-                ammoText.text = "AMMO " + combat.Ammo.Value + " / " + combat.MagazineSize;
+                ammoText.text = combat.Ammo.Value + " / " + combat.MagazineSize;
 
             ammoText.color = combat.Ammo.Value == 0 && !combat.IsReloading.Value
                 ? new Color(1f, 0.35f, 0.3f)
@@ -124,8 +124,9 @@ public class PlayerHUD : MonoBehaviour
             {
                 var standings = MatchManager.GetStandings();
                 int rank = standings.IndexOf(me) + 1;
-                scoreText.text = me.ColoredName + "   Score " + me.Score.Value +
-                                 "   #" + rank + " of " + standings.Count;
+                scoreText.text = "<b>" + me.ColoredName + "</b>\n" +
+                                 "<color=#9FB3C8>RANK</color> #" + rank + " of " + standings.Count +
+                                 "   <color=#9FB3C8>SCORE</color> " + me.Score.Value;
             }
             else
             {

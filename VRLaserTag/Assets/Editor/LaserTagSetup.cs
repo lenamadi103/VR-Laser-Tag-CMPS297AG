@@ -243,15 +243,17 @@ public static class LaserTagSetup
                     AssetDatabase.LoadAssetAtPath<Material>(LaserMaterialPath);
             }
 
-            // Muzzle point used for remote beams.
+            // Muzzle point (server fallback shot origin). Placed only when it
+            // is created: the visual redesign changes GunBody's transform, and
+            // the muzzle must not move with it.
             Transform muzzle = gun.Find("Muzzle");
             if (muzzle == null)
             {
                 muzzle = new GameObject("Muzzle").transform;
                 muzzle.SetParent(gun, false);
+                muzzle.position = gunBody.TransformPoint(new Vector3(0f, 0f, 0.6f));
+                muzzle.rotation = gunBody.rotation;
             }
-            muzzle.position = gunBody.TransformPoint(new Vector3(0f, 0f, 0.6f));
-            muzzle.rotation = gunBody.rotation;
 
             // Beam drawn when other players see this player shoot.
             Transform beamTransform = root.transform.Find("RemoteBeam");
@@ -298,6 +300,7 @@ public static class LaserTagSetup
                 body.GetComponent<Renderer>(),
                 head.GetComponent<Renderer>(),
                 leftHand.GetComponent<Renderer>(),
+                rightHand.GetComponent<Renderer>(),
             });
             infoSO.ApplyModifiedPropertiesWithoutUndo();
 
@@ -546,12 +549,19 @@ public static class LaserTagSetup
         MakeTallCover("Cover2", new Vector3(-3.5f, 1.1f, 3f), new Vector3(2.5f, 2.2f, 0.5f));
         MakeTallCover("Cover5", new Vector3(3.5f, 1.1f, -3f), new Vector3(2.5f, 2.2f, 0.5f));
 
+        // Plain cover material, unless the visual redesign
+        // (LaserTagVisuals) has already given the cover its own material.
         Material coverMaterial = GetOrCreateMaterial("Cover", new Color(0.2f, 0.45f, 0.75f), 0.3f);
         foreach (string name in new[] { "Cover1", "Cover2", "Cover3", "Cover4", "Cover5" })
         {
             GameObject cover = GameObject.Find(name);
-            if (cover != null && cover.GetComponent<Renderer>() != null)
-                cover.GetComponent<Renderer>().sharedMaterial = coverMaterial;
+            Renderer renderer = cover != null ? cover.GetComponent<Renderer>() : null;
+            if (renderer == null)
+                continue;
+
+            Material current = renderer.sharedMaterial;
+            if (current == null || current == coverMaterial || current.name == "Lit")
+                renderer.sharedMaterial = coverMaterial;
         }
     }
 
@@ -604,8 +614,8 @@ public static class LaserTagSetup
     // UI
     // ------------------------------------------------------------------
 
-    private static readonly Color PanelColor = new Color(0.06f, 0.08f, 0.12f, 0.92f);
-    private static readonly Color ButtonColor = new Color(0.18f, 0.32f, 0.55f, 1f);
+    private static readonly Color PanelColor = new Color(0.03f, 0.05f, 0.09f, 0.95f);
+    private static readonly Color ButtonColor = new Color(0.12f, 0.34f, 0.6f, 1f);
     private static readonly Color AccentButtonColor = new Color(0.15f, 0.55f, 0.3f, 1f);
     private static readonly Color DangerButtonColor = new Color(0.6f, 0.2f, 0.2f, 1f);
 
@@ -624,8 +634,14 @@ public static class LaserTagSetup
         Image background = CreateImage(panel, "Background", PanelColor);
         Stretch(background.rectTransform);
 
+        Image topLine = CreateImage(panel, "TopLine", HudAccent);
+        Place(topLine.rectTransform, 0f, 0.988f, 1f, 1f);
+        Image bottomLine = CreateImage(panel, "BottomLine", HudOrange);
+        Place(bottomLine.rectTransform, 0f, 0f, 1f, 0.008f);
+
         Text title = CreateText(panel, "Title", "VR LASER TAG", 56, TextAnchor.MiddleCenter);
         title.fontStyle = FontStyle.Bold;
+        title.color = HudAccent;
         Place(title.rectTransform, 0.03f, 0.88f, 0.97f, 0.98f);
 
         Text status = CreateText(panel, "Status", "Not connected", 26, TextAnchor.MiddleCenter);
@@ -738,17 +754,13 @@ public static class LaserTagSetup
         // The flash extends far beyond the HUD so it tints the whole view.
         Image flash = CreateImage(hud, "DamageFlash", new Color(1f, 0f, 0f, 0f));
         Stretch(flash.rectTransform);
+
+        // Red only around the edges of the view (see LaserTagVisuals).
+        Sprite vignette = AssetDatabase.LoadAssetAtPath<Sprite>(LaserTagVisuals.DamageVignettePath);
+        if (vignette != null)
+            flash.sprite = vignette;
         flash.rectTransform.offsetMin = new Vector2(-1500f, -1500f);
         flash.rectTransform.offsetMax = new Vector2(1500f, 1500f);
-
-        Text timer = CreateText(hud, "Timer", "", 44, TextAnchor.MiddleCenter);
-        timer.fontStyle = FontStyle.Bold;
-        Place(timer.rectTransform, 0.35f, 0.86f, 0.65f, 0.98f);
-        AddShadow(timer);
-
-        Text score = CreateText(hud, "Score", "", 26, TextAnchor.MiddleLeft);
-        Place(score.rectTransform, 0.02f, 0.86f, 0.34f, 0.98f);
-        AddShadow(score);
 
         Text feed = CreateText(hud, "Feed", "", 34, TextAnchor.MiddleCenter);
         Place(feed.rectTransform, 0.08f, 0.64f, 0.92f, 0.74f);
@@ -763,26 +775,50 @@ public static class LaserTagSetup
         hitMarker.color = new Color(1f, 0.95f, 0.4f);
         Place(hitMarker.rectTransform, 0.45f, 0.44f, 0.55f, 0.56f);
 
-        // Bottom stats bar.
+        // In-game panels (hidden while the menu is open). Small panels near
+        // the edges of the view, so the centre stays clear for aiming.
         RectTransform stats = new GameObject("Stats", typeof(RectTransform)).GetComponent<RectTransform>();
         stats.SetParent(hud, false);
-        Place(stats, 0.12f, 0.02f, 0.88f, 0.2f);
+        Stretch(stats);
 
-        Image statsBackground = CreateImage(stats, "Background", new Color(0f, 0f, 0f, 0.45f));
-        Stretch(statsBackground.rectTransform);
+        // Top centre: game mode and match timer.
+        Image timerPanel = CreatePanel(stats, "TimerPanel", 0.39f, 0.83f, 0.61f, 0.97f, HudAccent);
+        Text mode = CreateText(timerPanel.transform, "Mode", "FREE FOR ALL", 18, TextAnchor.MiddleCenter);
+        mode.color = HudAccent;
+        mode.fontStyle = FontStyle.Bold;
+        Place(mode.rectTransform, 0f, 0.64f, 1f, 0.97f);
 
-        Text health = CreateText(stats, "HealthText", "HP 100 / 100", 32, TextAnchor.MiddleLeft);
-        Place(health.rectTransform, 0.03f, 0.5f, 0.48f, 0.98f);
+        Text timer = CreateText(timerPanel.transform, "Timer", "", 40, TextAnchor.MiddleCenter);
+        timer.fontStyle = FontStyle.Bold;
+        Place(timer.rectTransform, 0f, 0.06f, 1f, 0.7f);
 
-        Image barBackground = CreateImage(stats, "HealthBarBackground", new Color(0.2f, 0.2f, 0.2f, 0.9f));
-        Place(barBackground.rectTransform, 0.03f, 0.14f, 0.48f, 0.42f);
+        // Top left: player name, rank and score.
+        Image rankPanel = CreatePanel(stats, "RankPanel", 0.05f, 0.83f, 0.35f, 0.97f, HudAccent);
+        Text score = CreateText(rankPanel.transform, "Score", "", 22, TextAnchor.MiddleLeft);
+        Place(score.rectTransform, 0.06f, 0.06f, 0.97f, 0.94f);
+
+        // Bottom left: health.
+        Image healthPanel = CreatePanel(stats, "HealthPanel", 0.05f, 0.03f, 0.4f, 0.16f, HudAccent);
+        Text health = CreateText(healthPanel.transform, "HealthText", "HP  100", 26, TextAnchor.MiddleLeft);
+        health.fontStyle = FontStyle.Bold;
+        Place(health.rectTransform, 0.05f, 0.48f, 0.95f, 0.97f);
+
+        Image barBackground = CreateImage(healthPanel.transform, "HealthBarBackground", new Color(0.12f, 0.14f, 0.18f, 0.95f));
+        Place(barBackground.rectTransform, 0.05f, 0.16f, 0.95f, 0.42f);
 
         Image bar = CreateImage(barBackground.transform, "HealthBar", new Color(0.3f, 0.95f, 0.4f));
         Stretch(bar.rectTransform);
 
-        Text ammo = CreateText(stats, "AmmoText", "AMMO 10 / 10", 34, TextAnchor.MiddleRight);
+        // Bottom right: ammo.
+        Image ammoPanel = CreatePanel(stats, "AmmoPanel", 0.6f, 0.03f, 0.95f, 0.16f, HudOrange);
+        Text ammoLabel = CreateText(ammoPanel.transform, "AmmoLabel", "AMMO", 18, TextAnchor.MiddleLeft);
+        ammoLabel.color = HudOrange;
+        ammoLabel.fontStyle = FontStyle.Bold;
+        Place(ammoLabel.rectTransform, 0.06f, 0.1f, 0.4f, 0.9f);
+
+        Text ammo = CreateText(ammoPanel.transform, "AmmoText", "10 / 10", 34, TextAnchor.MiddleRight);
         ammo.fontStyle = FontStyle.Bold;
-        Place(ammo.rectTransform, 0.52f, 0.1f, 0.97f, 0.9f);
+        Place(ammo.rectTransform, 0.3f, 0.05f, 0.94f, 0.95f);
 
         PlayerHUD hudController = canvas.gameObject.AddComponent<PlayerHUD>();
         SerializedObject so = new SerializedObject(hudController);
@@ -819,28 +855,42 @@ public static class LaserTagSetup
         canvas.transform.SetPositionAndRotation(position, rotation);
         Transform board = canvas.transform;
 
-        Image background = CreateImage(board, "Background", new Color(0.03f, 0.04f, 0.08f, 0.9f));
+        Image background = CreateImage(board, "Background", new Color(0.03f, 0.045f, 0.08f, 0.94f));
         Stretch(background.rectTransform);
 
-        Text header = CreateText(board, "Header", "VR LASER TAG", 56, TextAnchor.MiddleCenter);
+        Image topLine = CreateImage(board, "TopLine", HudAccent);
+        Place(topLine.rectTransform, 0f, 0.975f, 1f, 1f);
+        Image bottomLine = CreateImage(board, "BottomLine", HudOrange);
+        Place(bottomLine.rectTransform, 0f, 0f, 1f, 0.012f);
+
+        Text title = CreateText(board, "Title", "FREE FOR ALL", 46, TextAnchor.MiddleLeft);
+        title.fontStyle = FontStyle.Bold;
+        title.color = HudAccent;
+        Place(title.rectTransform, 0.05f, 0.83f, 0.5f, 0.96f);
+
+        // Match state / time left (written by ScoreboardUI).
+        Text header = CreateText(board, "Header", "VR LASER TAG", 38, TextAnchor.MiddleRight);
         header.fontStyle = FontStyle.Bold;
-        Place(header.rectTransform, 0.03f, 0.84f, 0.97f, 0.97f);
+        Place(header.rectTransform, 0.45f, 0.83f, 0.95f, 0.96f);
+
+        Image divider = CreateImage(board, "Divider", new Color(HudAccent.r, HudAccent.g, HudAccent.b, 0.35f));
+        Place(divider.rectTransform, 0.05f, 0.815f, 0.95f, 0.82f);
 
         Text ranks = CreateText(board, "Ranks", "", 44, TextAnchor.UpperCenter);
-        Place(ranks.rectTransform, 0.03f, 0.16f, 0.1f, 0.82f);
+        Place(ranks.rectTransform, 0.05f, 0.14f, 0.17f, 0.79f);
 
         Text names = CreateText(board, "Names", "", 44, TextAnchor.UpperLeft);
-        Place(names.rectTransform, 0.12f, 0.16f, 0.55f, 0.82f);
+        Place(names.rectTransform, 0.2f, 0.14f, 0.75f, 0.79f);
 
-        Text scores = CreateText(board, "Scores", "", 44, TextAnchor.UpperCenter);
-        Place(scores.rectTransform, 0.55f, 0.16f, 0.74f, 0.82f);
+        Text scores = CreateText(board, "Scores", "", 44, TextAnchor.UpperRight);
+        Place(scores.rectTransform, 0.75f, 0.14f, 0.95f, 0.79f);
 
-        Text deaths = CreateText(board, "Deaths", "", 44, TextAnchor.UpperCenter);
-        Place(deaths.rectTransform, 0.74f, 0.16f, 0.98f, 0.82f);
+        Text footer = CreateText(board, "Footer", "", 28, TextAnchor.MiddleCenter);
+        footer.color = new Color(0.62f, 0.7f, 0.8f);
+        Place(footer.rectTransform, 0.05f, 0.03f, 0.95f, 0.13f);
 
-        Text footer = CreateText(board, "Footer", "", 30, TextAnchor.MiddleCenter);
-        footer.color = new Color(0.8f, 0.85f, 1f);
-        Place(footer.rectTransform, 0.03f, 0.02f, 0.97f, 0.15f);
+        // Free-for-all leaderboard: rank, player, score (no deaths column).
+        Text deaths = null;
 
         ScoreboardUI scoreboard = canvas.gameObject.AddComponent<ScoreboardUI>();
         SerializedObject so = new SerializedObject(scoreboard);
@@ -877,6 +927,23 @@ public static class LaserTagSetup
         rect.localScale = Vector3.one * metresPerPixel;
 
         return canvas;
+    }
+
+    // Free-for-all UI palette (matches the arena: charcoal, blue, orange).
+    private static readonly Color HudPanelColor = new Color(0.03f, 0.05f, 0.09f, 0.72f);
+    private static readonly Color HudAccent = new Color(0.3f, 0.72f, 1f);
+    private static readonly Color HudOrange = new Color(1f, 0.6f, 0.22f);
+
+    // Dark translucent panel with a thin coloured line along the bottom.
+    private static Image CreatePanel(Transform parent, string name, float xMin, float yMin, float xMax, float yMax, Color accent)
+    {
+        Image panel = CreateImage(parent, name, HudPanelColor);
+        Place(panel.rectTransform, xMin, yMin, xMax, yMax);
+
+        Image line = CreateImage(panel.transform, "Accent", accent);
+        Place(line.rectTransform, 0f, 0f, 1f, 0.04f);
+
+        return panel;
     }
 
     private static RectTransform CreateSection(Transform parent, string name)
