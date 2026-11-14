@@ -574,7 +574,9 @@ public class NetworkAutoTest : MonoBehaviour
         if (!self.CanFireLocally(out _))
             return false;
 
-        self.RequestFire(origin, (aim - origin).normalized);
+        // The bot's gun hangs below its networked head; send that head as
+        // the eye so the server's wall check uses the same reference.
+        self.RequestFire(origin, (aim - origin).normalized, self.NetworkHead.position);
         return true;
     }
 
