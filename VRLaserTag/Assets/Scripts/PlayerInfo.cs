@@ -22,6 +22,14 @@ public class PlayerInfo : NetworkBehaviour
     // Renderers tinted with the player's color (body, head, hands).
     [SerializeField] private Renderer[] colorRenderers;
 
+    // Armour parts whose glowing accents (visor, chest light, stripes) use
+    // the player's color. Only the emission is tinted; the suit itself stays
+    // neutral (free-for-all: no team uniforms).
+    [SerializeField] private Renderer[] accentRenderers;
+    [SerializeField] private float accentIntensity = 1.6f;
+
+    private static readonly int EmissionColorId = Shader.PropertyToID("_EmissionColor");
+
     public readonly NetworkVariable<int> PlayerNumber = new NetworkVariable<int>(0);
     public readonly NetworkVariable<int> Score = new NetworkVariable<int>(0);
     public readonly NetworkVariable<int> Deaths = new NetworkVariable<int>(0);
@@ -62,13 +70,22 @@ public class PlayerInfo : NetworkBehaviour
 
     private void ApplyColor()
     {
-        if (colorRenderers == null)
-            return;
-
-        foreach (Renderer r in colorRenderers)
+        if (colorRenderers != null)
         {
-            if (r != null)
-                r.material.color = PlayerColor;
+            foreach (Renderer r in colorRenderers)
+            {
+                if (r != null)
+                    r.material.color = PlayerColor;
+            }
+        }
+
+        if (accentRenderers != null)
+        {
+            foreach (Renderer r in accentRenderers)
+            {
+                if (r != null)
+                    r.material.SetColor(EmissionColorId, PlayerColor * accentIntensity);
+            }
         }
     }
 
