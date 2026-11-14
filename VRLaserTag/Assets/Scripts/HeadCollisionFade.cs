@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.UI;
 
@@ -54,6 +55,10 @@ public class HeadCollisionFade : MonoBehaviour
     private static readonly Collider[] Overlaps = new Collider[8];
     private float alpha;
 
+    // The teleport floor is on the same layer as walls and cover, but being
+    // close to it (kneeling, reaching down) must not black out the view.
+    private readonly List<Collider> ignoredColliders = new List<Collider>();
+
     private void OnDisable()
     {
         IsViewBlocked = false;
@@ -63,6 +68,10 @@ public class HeadCollisionFade : MonoBehaviour
 
     private void Start()
     {
+        // Interactables collect their colliders in Awake, which has run by now.
+        foreach (ValidatedTeleportationArea area in FindObjectsByType<ValidatedTeleportationArea>(FindObjectsSortMode.None))
+            ignoredColliders.AddRange(area.colliders);
+
         Apply();
     }
 
@@ -106,7 +115,7 @@ public class HeadCollisionFade : MonoBehaviour
         for (int i = 0; i < count; i++)
         {
             Collider c = Overlaps[i];
-            if (c == null)
+            if (c == null || ignoredColliders.Contains(c))
                 continue;
 
             // ClosestPoint returns the position itself when it is inside.
