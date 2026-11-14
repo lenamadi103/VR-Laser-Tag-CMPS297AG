@@ -72,7 +72,7 @@ Nothing was renamed or deleted except the stray `Capsule` test object in the sce
 
 **Match rules.** Anyone can join until 5 players (late joiners play with 0 points). The host presses **START MATCH** when at least `minPlayers` (default 2) are connected → 5 s countdown (weapons locked) → 5 min match → results (highest score wins; equal top scores tie) → host presses **PLAY AGAIN**. Combat only works while Playing.
 
-**UI.** All UI only reads synced state. The lobby panel appears in front of the player (and re-centres when the player is moved to a spawn), hides when the countdown starts, and comes back for the results with a "YOU WIN / TIE" headline. While it is open the HUD hides its big messages so the two never overlap. Controls: **trigger** fire / click UI, **A** reload, **left menu button** show/hide menu, **left stick / ray** teleport (unchanged).
+**UI.** All UI only reads synced state. The lobby panel appears in front of the player (and re-centres when the player is moved to a spawn), hides when the countdown starts, and comes back for the results with a "YOU WIN / TIE" headline. While it is open the HUD hides its big messages so the two never overlap. Controls: **trigger** fire / click UI, **A** reload, **left menu button** show/hide menu, **thumbstick forward** (either hand) aim a teleport, release to go, **grip** while aiming cancels (see section 8).
 
 ## 4. What was tested
 
@@ -200,3 +200,60 @@ Scene cost (editor count, `LaserTagPreview.BatchStats`): before – 15 renderers
 
 - **Controllers and gun not showing:** the XR Device Simulator started on the headset before it was removed and deleted the real headset from the Input System. It now turns off before any other script runs (`DisableWhenHeadsetActive`), and Quest builds strip it from the scene (`StripSimulatorFromQuestBuild`).
 - **Menu buttons could not be clicked:** the right controller ray had no "UI Press" input. It is now wired, and the setup script assigns it automatically.
+
+---
+
+## 8. Headset fixes (branch `feature/headset-fixes`)
+
+Four problems reported from real Quest testing. Gameplay rules, networking, shooting, scoring and spawns are unchanged; the game stays free-for-all and teleport-only (course spec).
+
+### Root causes
+
+| Issue | Root cause found in the project |
+|---|---|
+| HUD too close, follows the head rigidly | `PlayerHUD` was a child of the headset camera, 0.6 m in front of the eyes: fully head-locked, and closer than is comfortable to focus on. |
+| Walking through walls and blocks | Every wall and cover block already had a solid BoxCollider. Movement is teleport-only (and teleport destinations were already validated), so the way through was **physical room-scale walking**, which no collider can stop (the headset cannot be pushed back). Nothing reacted when the head entered geometry. |
+| Controller movement unreliable / unexpected teleports | Three configuration faults in the XR rig: (1) the right **UI ray** was a projectile arc that could select the teleport floor, so **squeezing and releasing the grip on the gun hand teleported the player** wherever the arc pointed; (2) the right `ControllerInputActionManager` used the Right Hand itself as its "ray interactor": pushing the **thumbstick forward** (the standard Quest teleport gesture) **deactivated the whole Right Hand** (gun, ray, menu clicks), and because the manager sits on that same object it never re-activated it; (3) the Right Hand's existing Teleport Interactor was bound to the grip and offset **4.6 m forward and 2 m sideways** from the hand; the left ray had no select input at all. In addition the XR Origin requested no tracking origin, so the platform default was used. |
+| Player models look poor | Avatars were a Unity capsule (body), a sphere (head) and a cube visor. |
+
+### What changed
+
+- **HUD (`ComfortHud`)**: the HUD now lives under the XR Origin's Camera Offset (it moves with teleports and spawns instantly) and floats **1.3 m** away. It follows the view lazily: it only starts turning after the view is **18° (horizontal) / 14° (vertical)** away, then eases back to the centre (0.22 s). Small head movements leave it still. It stays upright, 3° below the line of sight. In front of a wall or cover it comes closer (minimum 0.45 m) and shrinks proportionally, so it is never hidden inside geometry and keeps the same angular size (text keeps the size of the old HUD, about 42 × 26° in total). The damage vignette moved to a small head-locked overlay (a full-view effect). No per-frame allocations; one sphere cast per frame.
+- **Walls (`HeadCollisionFade`)**: when the head comes within 12 cm of a wall/cover (or leaves the arena after spawning), the view fades to black and "STEP BACK INTO THE ARENA" is shown. The camera is never moved against the player's real motion (that causes motion sickness). While the view is blacked out the gun does not fire, so walking into cover gives no advantage. Teleporting out still works.
+- **Locomotion (existing XRI teleport system repaired, nothing new added)**: the floor accepts only the **Teleport** interaction layer; each hand has the XRI Starter Assets Teleport Interactor, activated by **pushing the thumbstick forward** and teleporting on **release** (grip while aiming cancels). The controller managers no longer deactivate the hands. The hand rays are now straight menu pointers that only draw their line over menus. The XR Origin requests a **Floor** tracking origin (real player height; standard for standing room-scale). Destination rules (`ValidatedTeleportationArea`) are unchanged. The lobby help text lists the teleport control.
+- **Avatars**: low-poly armoured suit (helmet with visor, torso with shoulder pads and power pack, legs) made of bevelled boxes in **one material** with an 8-pixel colour palette. Each player's own colour glows on the helmet crown, visor rim, chest core, shoulders, belt and legs (emission only; the suit itself is the same neutral white/grey for everyone, so nothing implies teams). `AvatarBodyVisual` places the torso under the synchronised head (it turns towards the view only after 40°) and stretches the legs to the floor (crouching works). No IK, no animation. Hitboxes (body capsule, head sphere) are unchanged, only their placeholder meshes are no longer drawn. The suit is hidden for its owner and while eliminated, like the rest of the avatar.
+
+### Files
+
+- New runtime scripts: `Scripts/ComfortHud.cs`, `Scripts/HeadCollisionFade.cs`, `Scripts/AvatarBodyVisual.cs`.
+- Changed: `Scripts/PlayerInfo.cs` (accent colour on suit emission), `Scripts/LaserGunShooting.cs` (no firing while the view is blacked out), `Scripts/PlayerHUD.cs` (comment), `Editor/LaserTagSetup.cs` (HUD placement, overlay, lobby help text), `Editor/LaserTagPreview.cs` (avatar lineup and HUD previews, avatar cost).
+- New editor tool: `Editor/LaserTagHeadsetFixes.cs` – menu **VR Laser Tag → 6. Headset Fixes → Apply All** (or `-executeMethod LaserTagHeadsetFixes.BatchApplyAll`). Safe to run again.
+- Scene/prefab: `ArenaScene.unity` (HUD, overlay, teleport interactors, controller managers, rays, floor layer, tracking origin), `Prefabs/NetworkPlayer.prefab` (suit parts, `AvatarBodyVisual`, renderer lists).
+- New assets: `Meshes/Avatar_Helmet|Torso|Legs.asset`, `Materials/Avatar/Avatar_Suit.mat`, `Textures/Avatar/` (two 8 × 1 px palettes).
+
+### Performance (measured in the Editor; not yet on a headset)
+
+| | Before | After |
+|---|---|---|
+| Arena scene | 116 renderers, ~21 mesh draws, 0 real-time lights | unchanged |
+| One remote avatar – draws | 8 | **8** (helmet, torso and legs replace capsule, sphere and visor) |
+| One remote avatar – triangles | 2,054 | 2,680 (+626; about +2,500 with four opponents) |
+| Suit materials | per-part colour materials | 1 shared material (Simple Lit, no transparency, no shadows) |
+| HUD | 1 canvas | 1 canvas + overlay (drawn only during damage flash / wall fade) |
+| CPU per frame (new) | – | 1 sphere cast (HUD), 1 overlap sphere (wall fade), a few transform updates per visible avatar; no allocations |
+
+### Verified / not verified
+
+- ✅ Compiles; setup runs; Windows build succeeds; automated **3-player and 5-player matches PASS** on host and all clients (no disconnects). The variant where one client leaves mid-match reports "More points than eliminations" on the host: the check sums deaths of *connected* players only, so it fails whenever the leaving player had been hit before leaving (a limitation of the test, not of the game; no scoring code changed).
+- ✅ Previews reviewed: avatar lineup in all five colours (different heights, crouching), HUD in the open and in front of cover (`Builds/Previews/c4`–`c8`).
+- ❌ Not verified on a headset yet: HUD comfort while moving, thumbstick teleport on both hands, the wall fade while walking, Floor tracking origin on Quest, avatar look and tracking in a real match, Quest 2 / Quest 3 frame time.
+
+### Fix: shots through thin walls
+
+Found in a code review: the server's shot raycast starts at the gun tip, and the tip was only checked to be within 1.5 m of the head. A player standing behind one of the 0.5 m tall walls (`Cover2`, `Cover5`) could physically reach the gun through it (the head stays outside, so the wall fade does not trigger) or push the tip into a block, and the shot started behind the obstacle.
+
+- `PlayerCombat`: new `ShotRejectReason.MuzzleBlocked`. The server refuses a shot when the gun tip is inside a wall/cover block or a wall/cover block lies between the shooter's head and the gun tip (`IsMuzzleBlocked`: one small overlap test and two linecasts, no allocations). The shooter sends its real head position with the request; the server replaces it with its own copy if it is more than 1.5 m away (same rule as the shot origin). No ammo is spent on a refused shot.
+- `LaserGunShooting`: the same check runs before firing, so the shooter gets instant feedback (no predicted beam, 'denied' sound and haptic, HUD message "Gun blocked by a wall - pull it back").
+- `NetworkAutoTest`: bots send their networked head as the eye position (their gun hangs 0.2 m below it).
+- Holding the gun just over the near edge of crouch cover still works; reaching deep over or through a block does not.
+- ❌ Not yet verified in Unity: compile, automated 3/5-player matches, and the behaviour on a headset.

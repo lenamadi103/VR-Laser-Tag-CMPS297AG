@@ -22,6 +22,7 @@ public enum ShotRejectReason : byte
     Reloading,
     OutOfAmmo,
     TooFast,
+    MuzzleBlocked, // The gun tip is inside or behind a wall/cover block.
 }
 
 // Server-authoritative combat state of one player.
@@ -197,11 +198,31 @@ public class PlayerCombat : NetworkBehaviour
 
     public void RequestFire(Vector3 origin, Vector3 direction)
     {
+        RequestFire(origin, direction, LocalEyePosition());
+    }
+
+    // eye: where the shooter's head is at the moment of firing. The server
+    // uses it (after a distance check) to make sure the gun is on the
+    // shooter's side of every wall and cover block.
+    public void RequestFire(Vector3 origin, Vector3 direction, Vector3 eye)
+    {
         if (!IsOwner || !IsSpawned)
             return;
 
         localNextFireTime = Time.time + fireInterval;
-        FireRpc(origin, direction);
+        FireRpc(origin, direction, eye);
+    }
+
+    // The real headset position on the owner's device. The networked head
+    // follows it too, but its root position arrives from the server and
+    // lags behind right after a teleport or respawn.
+    public Vector3 LocalEyePosition()
+    {
+        NetworkVRPlayer vrPlayer = GetComponent<NetworkVRPlayer>();
+        if (vrPlayer != null && vrPlayer.LocalXROrigin != null && vrPlayer.LocalXROrigin.Camera != null)
+            return vrPlayer.LocalXROrigin.Camera.transform.position;
+
+        return networkHead != null ? networkHead.position : transform.position;
     }
 
     public void RequestReload()
@@ -226,7 +247,7 @@ public class PlayerCombat : NetworkBehaviour
     // ------------------------------------------------------------------
 
     [Rpc(SendTo.Server)]
-    private void FireRpc(Vector3 origin, Vector3 direction, RpcParams rpcParams = default)
+    private void FireRpc(Vector3 origin, Vector3 direction, Vector3 eye, RpcParams rpcParams = default)
     {
         // Only the owner may fire this player's gun.
         if (rpcParams.Receive.SenderClientId != OwnerClientId)
@@ -246,8 +267,26 @@ public class PlayerCombat : NetworkBehaviour
         // Do not trust an origin far away from where the server sees
         // this player. Latency and smoothing make small differences normal.
         Vector3 head = networkHead != null ? networkHead.position : transform.position;
-        if ((origin - head).sqrMagnitude > maxOriginDistanceFromHead * maxOriginDistanceFromHead)
+        float maxOffset = maxOriginDistanceFromHead * maxOriginDistanceFromHead;
+
+        if (float.IsNaN(origin.x) || (origin - head).sqrMagnitude > maxOffset)
+        {
             origin = gunMuzzle != null ? gunMuzzle.position : head;
+            eye = head;
+        }
+
+        // The reported head position gets the same tolerance.
+        if (float.IsNaN(eye.x) || (eye - head).sqrMagnitude > maxOffset)
+            eye = head;
+
+        // Cover must also block the shot on the shooter's side: reaching
+        // through a thin wall (real room-scale movement) or pushing the gun
+        // tip into a block must not let a shot start behind it.
+        if (IsMuzzleBlocked(eye, origin))
+        {
+            ShotRejectedRpc(ShotRejectReason.MuzzleBlocked, RpcTarget.Single(OwnerClientId, RpcTargetUse.Temp));
+            return;
+        }
 
         Ammo.Value -= 1;
 
@@ -464,6 +503,7 @@ public class PlayerCombat : NetworkBehaviour
             case ShotRejectReason.Eliminated: return "You are eliminated";
             case ShotRejectReason.Reloading: return "Reloading...";
             case ShotRejectReason.OutOfAmmo: return "Out of ammo - press A to reload";
+            case ShotRejectReason.MuzzleBlocked: return "Gun blocked by a wall - pull it back";
             default: return "";
         }
     }
@@ -518,6 +558,32 @@ public class PlayerCombat : NetworkBehaviour
         remoteBeam.SetPosition(1, end);
         remoteBeam.enabled = true;
         beamHideTime = Time.time + beamDuration;
+    }
+
+    // Walls, cover and the floor are on the Default layer.
+    public const int ObstacleMask = 1 << 0;
+
+    // Radius around the gun tip that must be free of walls and cover.
+    private const float MuzzleClearance = 0.02f;
+
+    // True when the gun tip is inside a wall/cover block, or a wall/cover
+    // block lies between the shooter's head and the gun tip. Used by the
+    // server (authoritative) and by the shooter's client (instant feedback).
+    public static bool IsMuzzleBlocked(Vector3 eye, Vector3 muzzle)
+    {
+        if (Physics.CheckSphere(muzzle, MuzzleClearance, ObstacleMask, QueryTriggerInteraction.Ignore))
+            return true;
+
+        // Both directions: a linecast does not detect a collider it starts
+        // inside (for example a head that is inside a wall).
+        return Physics.Linecast(eye, muzzle, ObstacleMask, QueryTriggerInteraction.Ignore) ||
+               Physics.Linecast(muzzle, eye, ObstacleMask, QueryTriggerInteraction.Ignore);
+    }
+
+    // Shows a shot refusal decided on this device (same text as a server refusal).
+    public static void NotifyLocalShotRejected(ShotRejectReason reason)
+    {
+        RaiseLocalFeedback(CombatFeedback.ShotRejected, DescribeReason(reason));
     }
 
     private static void RaiseLocalFeedback(CombatFeedback type, string message)

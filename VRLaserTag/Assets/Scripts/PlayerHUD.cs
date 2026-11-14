@@ -2,7 +2,9 @@ using Unity.Netcode;
 using UnityEngine;
 using UnityEngine.UI;
 
-// Head-locked HUD for the local player (child of the VR camera).
+// HUD for the local player. It floats 1.3 m in front of the player and
+// follows the view lazily (ComfortHud); the damage vignette is on a separate
+// head-locked overlay.
 // Shows health, ammo, timer, score and big status messages
 // (countdown, eliminated + respawn timer, match results),
 // plus short feedback for hits and damage.

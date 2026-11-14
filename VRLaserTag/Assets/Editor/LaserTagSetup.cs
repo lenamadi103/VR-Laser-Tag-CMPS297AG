@@ -661,7 +661,7 @@ public static class LaserTagSetup
         Text help = CreateText(connect, "Help",
             "One player hosts. The others type the host's IP address and press JOIN.\n\n" +
             "All headsets must be on the same Wi-Fi network.\n\n" +
-            "Trigger: fire / click\nA: reload\nLeft menu button: show/hide this panel",
+            "Trigger: fire / click\nA: reload\nThumbstick forward: aim teleport, release to go\nLeft menu button: show/hide this panel",
             22, TextAnchor.UpperLeft);
         help.color = new Color(0.8f, 0.82f, 0.88f);
         Place(help.rectTransform, 0.04f, 0.04f, 0.47f, 0.62f);
@@ -740,27 +740,83 @@ public static class LaserTagSetup
         if (headCamera == null)
             return;
 
-        Transform existing = headCamera.transform.Find("PlayerHUD");
-        if (existing != null)
-            Object.DestroyImmediate(existing.gameObject);
+        // The HUD is not a child of the camera (that made it rigidly
+        // head-locked): it lives under the XR Origin's Camera Offset, so it
+        // moves with teleports and spawns, and ComfortHud follows the view
+        // lazily at a comfortable distance.
+        XROrigin origin = headCamera.GetComponentInParent<XROrigin>();
+        Transform hudParent = origin != null && origin.CameraFloorOffsetObject != null
+            ? origin.CameraFloorOffsetObject.transform
+            : headCamera.transform.parent;
 
-        // 1000 x 600 px at 0.0005 m/px = 0.5 m x 0.3 m, 0.6 m in front of the eyes.
-        Canvas canvas = CreateWorldCanvas("PlayerHUD", headCamera.transform, new Vector2(1000, 600), 0.0005f, headCamera, false);
-        canvas.transform.localPosition = new Vector3(0f, 0f, 0.6f);
+        DestroyChildNamed(headCamera.transform, "PlayerHUD");   // old head-locked version
+        DestroyChildNamed(headCamera.transform, "ViewOverlay");
+        DestroyChildNamed(headCamera.transform, "BlockedHint");
+        DestroyChildNamed(hudParent, "PlayerHUD");
+
+        // 1000 x 600 px at 0.001 m/px = 1.0 m x 0.6 m at 1.3 m from the eyes
+        // (about 42 x 26 degrees; the text keeps the same angular size as
+        // the old 0.6 m HUD, the panels sit at the edges of the view).
+        Canvas canvas = CreateWorldCanvas("PlayerHUD", hudParent, new Vector2(1000, 600), HudMetresPerPixel, headCamera, false);
+        canvas.transform.localPosition = headCamera.transform.localPosition + Vector3.forward * HudDistance;
         canvas.transform.localRotation = Quaternion.identity;
         canvas.sortingOrder = 10;
         Transform hud = canvas.transform;
 
-        // The flash extends far beyond the HUD so it tints the whole view.
-        Image flash = CreateImage(hud, "DamageFlash", new Color(1f, 0f, 0f, 0f));
-        Stretch(flash.rectTransform);
+        ComfortHud follow = canvas.gameObject.AddComponent<ComfortHud>();
+        follow.head = headCamera.transform;
+        follow.distance = HudDistance;
+        follow.obstacleMask = 1 << 0; // walls and cover (Default layer)
+
+        // Full-view effects stay head-locked on a small overlay just in front
+        // of the eyes: the red damage vignette and the black fade used when the
+        // head goes into a wall (HeadCollisionFade).
+        const float overlayDistance = 0.1f;
+        const float overlayHalfAngle = 59f; // same coverage as the old vignette
+        float overlayMetresPerPixel = 2f * overlayDistance * Mathf.Tan(overlayHalfAngle * Mathf.Deg2Rad) / 1000f;
+
+        Canvas overlay = CreateWorldCanvas("ViewOverlay", headCamera.transform, new Vector2(1000, 1000), overlayMetresPerPixel, headCamera, false);
+        overlay.transform.localPosition = new Vector3(0f, 0f, overlayDistance);
+        overlay.transform.localRotation = Quaternion.identity;
+        overlay.sortingOrder = 20;
 
         // Red only around the edges of the view (see LaserTagVisuals).
+        Image flash = CreateImage(overlay.transform, "DamageFlash", new Color(1f, 0f, 0f, 0f));
+        Stretch(flash.rectTransform);
         Sprite vignette = AssetDatabase.LoadAssetAtPath<Sprite>(LaserTagVisuals.DamageVignettePath);
         if (vignette != null)
             flash.sprite = vignette;
-        flash.rectTransform.offsetMin = new Vector2(-1500f, -1500f);
-        flash.rectTransform.offsetMax = new Vector2(1500f, 1500f);
+
+        Image blackout = CreateImage(overlay.transform, "WallFade", new Color(0f, 0f, 0f, 0f));
+        Stretch(blackout.rectTransform);
+        blackout.rectTransform.offsetMin = new Vector2(-1500f, -1500f);
+        blackout.rectTransform.offsetMax = new Vector2(1500f, 1500f);
+        blackout.enabled = false;
+
+        // The hint is readable at 0.6 m (text 0.1 m from the eyes is not).
+        Canvas hintCanvas = CreateWorldCanvas("BlockedHint", headCamera.transform, new Vector2(700, 140), 0.0005f, headCamera, false);
+        hintCanvas.transform.localPosition = new Vector3(0f, 0f, 0.6f);
+        hintCanvas.transform.localRotation = Quaternion.identity;
+        hintCanvas.sortingOrder = 30;
+        Text hint = CreateText(hintCanvas.transform, "Hint", "STEP BACK INTO THE ARENA", 40, TextAnchor.MiddleCenter);
+        hint.fontStyle = FontStyle.Bold;
+        hint.color = HudOrange;
+        Stretch(hint.rectTransform);
+        hint.enabled = false;
+
+        HeadCollisionFade fade = overlay.gameObject.AddComponent<HeadCollisionFade>();
+        fade.head = headCamera.transform;
+        fade.fadeImage = blackout;
+        fade.hintText = hint;
+        fade.obstacleMask = 1 << 0;
+
+        ValidatedTeleportationArea arena = Object.FindAnyObjectByType<ValidatedTeleportationArea>(FindObjectsInactive.Include);
+        if (arena != null)
+        {
+            // Up to the inner faces of the outer walls.
+            fade.arenaCenter = arena.arenaCenter;
+            fade.arenaHalfSize = arena.arenaHalfSize + new Vector2(0.25f, 0.25f);
+        }
 
         Text feed = CreateText(hud, "Feed", "", 34, TextAnchor.MiddleCenter);
         Place(feed.rectTransform, 0.08f, 0.64f, 0.92f, 0.74f);
@@ -927,6 +983,23 @@ public static class LaserTagSetup
         rect.localScale = Vector3.one * metresPerPixel;
 
         return canvas;
+    }
+
+    // Player HUD placement (see ComfortHud).
+    private const float HudDistance = 1.3f;
+    private const float HudMetresPerPixel = 0.001f;
+
+    private static void DestroyChildNamed(Transform parent, string name)
+    {
+        if (parent == null)
+            return;
+
+        Transform child = parent.Find(name);
+        while (child != null)
+        {
+            Object.DestroyImmediate(child.gameObject);
+            child = parent.Find(name);
+        }
     }
 
     // Free-for-all UI palette (matches the arena: charcoal, blue, orange).
