@@ -138,6 +138,15 @@ public class LaserGunShooting : MonoBehaviour
                 return;
             }
 
+            // Same rule the server applies: the gun tip must not be inside
+            // or behind a wall/cover block (reaching through cover).
+            if (PlayerCombat.IsMuzzleBlocked(combat.LocalEyePosition(), muzzlePoint.position))
+            {
+                OnShotBlocked(combat, ShotRejectReason.MuzzleBlocked);
+                PlayerCombat.NotifyLocalShotRejected(ShotRejectReason.MuzzleBlocked);
+                return;
+            }
+
             Vector3 endPoint = PredictEndPoint(combat);
 
             combat.RequestFire(muzzlePoint.position, muzzlePoint.forward);
