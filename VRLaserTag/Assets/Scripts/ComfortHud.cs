@@ -1,17 +1,19 @@
 using UnityEngine;
 
-// Keeps the player's HUD at a comfortable reading distance and lets it
-// follow the player's view lazily instead of being glued to the headset.
+// Places the player's HUD at a comfortable reading distance (1.3 m).
 //
-// - The HUD lives under the XR Origin's "Camera Offset" (not under the
-//   camera), so teleports and spawns carry it along instantly, while head
-//   rotation is followed smoothly.
-// - It only starts turning after the view has moved more than a threshold
-//   angle away from it, then eases back to the centre of the view. Small
-//   head movements (aiming, looking around a corner) leave it still.
-// - Its distance shrinks in front of walls and cover so it is never drawn
-//   "inside" geometry (which would hide it or give conflicting depth cues).
-//   The scale changes with the distance, so it keeps the same angular size.
+// Two modes:
+// - Lock To View (default): the HUD is fixed in the view like a flat-screen
+//   game HUD. While the game runs it is a child of the headset camera, so it
+//   is drawn with exactly the pose the headset renders with: no lag, no
+//   jitter, no drift when walking, turning or teleporting.
+// - Lazy follow (Lock To View off): the HUD lives under the XR Origin's
+//   "Camera Offset" and only turns once the view has moved more than a
+//   threshold angle away from it, then eases back to the centre.
+//
+// In both modes the distance shrinks in front of walls and cover, and the
+// scale shrinks with it (same angular size), so the HUD never sits "inside"
+// geometry. The HUD itself is drawn on top of the arena (HudOverlay shader).
 //
 // Visual only: no gameplay state is read or written. No per-frame allocations.
 [DefaultExecutionOrder(1000)] // after tracking and the player scripts
@@ -19,6 +21,13 @@ public class ComfortHud : MonoBehaviour
 {
     [Tooltip("The headset camera.")]
     public Transform head;
+
+    [Header("Mode")]
+    [Tooltip("On: the HUD is fixed in the view like a flat-screen game HUD (it moves rigidly with the head). Off: it follows the view lazily.")]
+    public bool lockToView = true;
+
+    [Tooltip("Lock To View: how far below the centre of the view the HUD centre sits, in degrees.")]
+    public float lockedPitchOffset = 0f;
 
     [Header("Placement")]
     [Tooltip("Preferred distance from the eyes, in metres.")]
@@ -68,10 +77,12 @@ public class ComfortHud : MonoBehaviour
     private float currentDistance;
     private float distanceVelocity;
     private bool initialised;
+    private Transform followParent; // Camera Offset (lazy mode)
 
     private void Awake()
     {
         baseScale = transform.localScale;
+        followParent = transform.parent;
     }
 
     private void OnEnable()
@@ -94,6 +105,18 @@ public class ComfortHud : MonoBehaviour
         if (baseScale == Vector3.zero)
             baseScale = transform.localScale;
 
+        if (Locked)
+        {
+            AttachToHead();
+            currentDistance = LockedFreeDistance();
+            distanceVelocity = 0f;
+            initialised = true;
+            ApplyLocked();
+            return;
+        }
+
+        DetachFromHead();
+
         ReadHead(out Vector3 headPosition, out float headYaw, out float headPitch, out _);
 
         yaw = headYaw;
@@ -114,9 +137,17 @@ public class ComfortHud : MonoBehaviour
         if (head == null)
             return;
 
-        if (!initialised)
+        // (Re)place the HUD at start and whenever the mode is switched.
+        if (!initialised || Locked != (transform.parent == head))
         {
             Snap();
+            return;
+        }
+
+        if (Locked)
+        {
+            currentDistance = Mathf.SmoothDamp(currentDistance, LockedFreeDistance(), ref distanceVelocity, distanceSmoothTime);
+            ApplyLocked();
             return;
         }
 
@@ -168,6 +199,47 @@ public class ComfortHud : MonoBehaviour
         currentDistance = Mathf.SmoothDamp(currentDistance, FreeDistance(), ref distanceVelocity, distanceSmoothTime);
 
         Apply();
+    }
+
+    // Locked only while the game runs: in edit mode (editor previews) the
+    // HUD keeps its scene parent and is placed like the lazy mode.
+    private bool Locked => lockToView && Application.isPlaying;
+
+    // Lock To View: the HUD becomes a child of the headset camera.
+    private void AttachToHead()
+    {
+        if (transform.parent != head)
+            transform.SetParent(head, false);
+    }
+
+    private void DetachFromHead()
+    {
+        if (transform.parent == head && followParent != null)
+            transform.SetParent(followParent, false);
+    }
+
+    private Quaternion LockedRotation => Quaternion.Euler(lockedPitchOffset, 0f, 0f);
+
+    // Lock To View: free distance straight ahead of the view.
+    private float LockedFreeDistance()
+    {
+        Vector3 direction = head.rotation * (LockedRotation * Vector3.forward);
+
+        if (Physics.SphereCast(head.position, 0.05f, direction, out RaycastHit hit, distance + wallGap,
+            obstacleMask, QueryTriggerInteraction.Ignore))
+        {
+            return Mathf.Clamp(hit.distance - wallGap, minDistance, distance);
+        }
+
+        return distance;
+    }
+
+    private void ApplyLocked()
+    {
+        Quaternion rotation = LockedRotation;
+        transform.localPosition = rotation * Vector3.forward * currentDistance;
+        transform.localRotation = rotation;
+        transform.localScale = baseScale * (currentDistance / distance);
     }
 
     // Distance available in front of the eyes before a wall or cover.
