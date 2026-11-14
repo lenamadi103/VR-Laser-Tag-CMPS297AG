@@ -247,3 +247,13 @@ Four problems reported from real Quest testing. Gameplay rules, networking, shoo
 - ✅ Compiles; setup runs; Windows build succeeds; automated **3-player and 5-player matches PASS** on host and all clients (no disconnects). The variant where one client leaves mid-match reports "More points than eliminations" on the host: the check sums deaths of *connected* players only, so it fails whenever the leaving player had been hit before leaving (a limitation of the test, not of the game; no scoring code changed).
 - ✅ Previews reviewed: avatar lineup in all five colours (different heights, crouching), HUD in the open and in front of cover (`Builds/Previews/c4`–`c8`).
 - ❌ Not verified on a headset yet: HUD comfort while moving, thumbstick teleport on both hands, the wall fade while walking, Floor tracking origin on Quest, avatar look and tracking in a real match, Quest 2 / Quest 3 frame time.
+
+### Fix: shots through thin walls
+
+Found in a code review: the server's shot raycast starts at the gun tip, and the tip was only checked to be within 1.5 m of the head. A player standing behind one of the 0.5 m tall walls (`Cover2`, `Cover5`) could physically reach the gun through it (the head stays outside, so the wall fade does not trigger) or push the tip into a block, and the shot started behind the obstacle.
+
+- `PlayerCombat`: new `ShotRejectReason.MuzzleBlocked`. The server refuses a shot when the gun tip is inside a wall/cover block or a wall/cover block lies between the shooter's head and the gun tip (`IsMuzzleBlocked`: one small overlap test and two linecasts, no allocations). The shooter sends its real head position with the request; the server replaces it with its own copy if it is more than 1.5 m away (same rule as the shot origin). No ammo is spent on a refused shot.
+- `LaserGunShooting`: the same check runs before firing, so the shooter gets instant feedback (no predicted beam, 'denied' sound and haptic, HUD message "Gun blocked by a wall - pull it back").
+- `NetworkAutoTest`: bots send their networked head as the eye position (their gun hangs 0.2 m below it).
+- Holding the gun just over the near edge of crouch cover still works; reaching deep over or through a block does not.
+- ❌ Not yet verified in Unity: compile, automated 3/5-player matches, and the behaviour on a headset.
