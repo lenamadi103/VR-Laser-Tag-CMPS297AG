@@ -257,3 +257,29 @@ Found in a code review: the server's shot raycast starts at the gun tip, and the
 - `NetworkAutoTest`: bots send their networked head as the eye position (their gun hangs 0.2 m below it).
 - Holding the gun just over the near edge of crouch cover still works; reaching deep over or through a block does not.
 - ❌ Not yet verified in Unity: compile, automated 3/5-player matches, and the behaviour on a headset.
+
+### Fix: wall fade near the floor
+
+The Floor is on the Default layer like walls and cover, so a head within ~22 cm of it (kneeling, reaching down) blacked out the view and held the gun. `HeadCollisionFade` now ignores the colliders of the teleport floor (`ValidatedTeleportationArea`).
+
+---
+
+## 9. HUD redesign: fixed in view, shooter-style layout
+
+**Problem:** the lazy-follow HUD drifted around the view when the player moved, and walls closer than 1.3 m cut through it.
+
+**What changed**
+
+- **Fixed in view** (`ComfortHud.lockToView`, on by default): while the game runs the HUD is a child of the headset camera, 1.3 m away, so it is rendered with exactly the headset pose (no lag, jitter or drift when walking, turning or teleporting). In front of a wall it still moves closer and shrinks (same angular size). Unticking **Lock To View** on the PlayerHUD object restores the lazy follow.
+- **Always visible:** the HUD uses a UI shader drawn on top of the arena (`Assets/Resources/HudOverlay.shader`, ZTest Always, single-pass instanced stereo). The wall fade and damage vignette still draw over it.
+- **Layout** (`PlayerHUD`, built in code at start-up, so the editor setup scripts do not need to be re-run): RANK | TIME | SCORE panels with icons along the top, a FREE FOR ALL tag below, HEALTH bottom-left (heart icon, value, 10 segments that turn yellow/red), AMMO bottom-right (bullets icon, value, one segment per shot, RELOADING), a big GO! / countdown / ELIMINATED / result message in the middle, a feed line and a hit marker.
+- **Art** (`HudArt`): chamfered panels with a glowing outline, rounded bar segments and the icons are generated in code at start-up (a few 64 px textures, no assets to import).
+- **VR comfort:** everything stays inside the central ~44 x 29 degrees of the view (sharp area of the Quest lenses), and text is at least ~1 degree tall. There is deliberately **no head-centred crosshair**: in VR the shot follows the gun, so a crosshair in the middle of the view would point somewhere else than the gun.
+- **Performance:** one canvas; text, bars and colours are only updated when a value changes; standings are sorted 4 times per second instead of every frame.
+
+**Files:** `Scripts/PlayerHUD.cs` (rewritten), `Scripts/ComfortHud.cs` (Lock To View), new `Scripts/HudArt.cs`, new `Resources/HudOverlay.shader`. Scene and prefab unchanged.
+
+**Notes**
+
+- The editor HUD preview (`LaserTagPreview.BatchRenderHud`) still shows the old scene panels; the new layout only appears when the game runs.
+- ❌ Not yet verified in Unity: compile, the HUD in Play mode / Windows build, and on a headset (readability on Quest 2 and Quest 3, comfort of the fixed HUD while moving).
