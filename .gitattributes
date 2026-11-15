@@ -1,0 +1,3 @@
+# Preserve documentation media bytes across Windows and other checkouts.
+docs/**/*.pdf binary
+docs/**/*.png binary

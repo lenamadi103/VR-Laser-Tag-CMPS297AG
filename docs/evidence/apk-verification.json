@@ -1,0 +1,24 @@
+{
+  "apk": "VRLaserTag-Quest-HUD.apk",
+  "size_bytes": 43969875,
+  "sha256": "72c6c41d48030c1920e917b7661d17e7ec46e8c95f9b8ded5d2e77250e470ebc",
+  "arm64": true,
+  "quest_2_and_quest_3_manifest_targets": true,
+  "signature_verified": true,
+  "headset_tested": true,
+  "headset_test_record": {
+    "date": "2026-11-15",
+    "source": "team report confirmed in chat",
+    "models": [
+      "Meta Quest 2",
+      "Meta Quest 3"
+    ],
+    "simultaneous_players": 3,
+    "latest_delivered_apk_confirmed": true,
+    "result": "Everything worked, as reported by the team",
+    "independently_observed": false,
+    "per_feature_logs_supplied": false,
+    "five_headsets_tested": false,
+    "measured_quest_2_performance_supplied": false
+  }
+}

@@ -1,0 +1,9 @@
+HUD projection bounds checks
+Windows: all five panel bounds PASS
+Quest2: all five panel bounds PASS
+Quest3: all five panel bounds PASS
+Quest2 left-eye simulation: all five panel bounds PASS
+Quest3 left-eye simulation: all five panel bounds PASS
+Quest2 right-eye simulation: all five panel bounds PASS
+Quest3 right-eye simulation: all five panel bounds PASS
+Windows near cover; constant angular size PASS: all five panel bounds PASS
