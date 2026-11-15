@@ -4,7 +4,7 @@
 > **Current status - 15 November 2026.** The sections below are historical implementation and test records. The team has since confirmed a successful retest of the latest delivered APK, including the updated HUD, with three simultaneous players on Quest 2 and Quest 3 on 15 November. Earlier statements that no physical-headset testing occurred describe the earlier review stage. Five simultaneous headsets and measured Quest 2 performance remain outstanding. Unity Transport resolves to **6.6.0** in the committed lockfile; the **2.6.0** introduction below is historical. See the [project README](../README.md), [current test record](../docs/TESTING.md) and [combined report](../docs/Technical-Report-and-Contributions.pdf) for the submission overview.
 
 
-Unity **6000.6.2f1** · Netcode for GameObjects **2.13.3** · Unity Transport **2.6.0** · XR Interaction Toolkit **3.6.1** · OpenXR **1.19.0** (new) · XR Plug-in Management **4.6.1** (new) · Input System **1.20.0** · URP **17.6.0**
+Unity **6000.6.2f1** · Netcode for GameObjects **2.13.3** · Unity Transport **6.6.0** · XR Interaction Toolkit **3.6.1** · OpenXR **1.19.0** (new) · XR Plug-in Management **4.6.1** (new) · Input System **1.20.0** · URP **17.6.0**
 
 ## Test-only bot
 
