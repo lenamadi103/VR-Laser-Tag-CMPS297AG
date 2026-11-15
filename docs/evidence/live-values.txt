@@ -1,0 +1,2 @@
+Health=True (100), Ammo=True (8), Rank=True, Score=True (0), Time=True (0:00)
+Health=True (100), Ammo=True (10), Rank=True, Score=True (0), Time=True (3:54)

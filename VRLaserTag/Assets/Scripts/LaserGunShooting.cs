@@ -32,8 +32,24 @@ public class LaserGunShooting : MonoBehaviour
     [Tooltip("Ray used for UI. While it points at a UI panel, the trigger clicks UI instead of firing.")]
     public XRRayInteractor uiRayInteractor;
 
+    [Tooltip("Show a small marker where a shot fired now would land.")]
+    public bool showAimMarker = true;
+
     private Coroutine laserCoroutine;
     private string lastAmmoLabel;
+    private AimMarker aimMarker;
+
+    private void Start()
+    {
+        if (showAimMarker && aimMarker == null)
+            aimMarker = AimMarker.Create(this);
+    }
+
+    private void OnDestroy()
+    {
+        if (aimMarker != null)
+            Destroy(aimMarker.gameObject);
+    }
 
     private void Reset()
     {
@@ -110,6 +126,16 @@ public class LaserGunShooting : MonoBehaviour
             if (uiRayInteractor != null && uiRayInteractor.IsOverUIGameObject())
                 return;
 
+            // The player's head is inside a wall/cover block or outside the
+            // arena (room-scale walking): the view is blacked out and shots
+            // are held, so walking through geometry gives no advantage.
+            if (HeadCollisionFade.IsViewBlocked)
+            {
+                if (GameAudio.Instance != null)
+                    GameAudio.Play2D(GameAudio.Instance.denied, 0.5f);
+                return;
+            }
+
             Shoot();
         }
     }
@@ -125,6 +151,15 @@ public class LaserGunShooting : MonoBehaviour
             if (!combat.CanFireLocally(out ShotRejectReason reason))
             {
                 OnShotBlocked(combat, reason);
+                return;
+            }
+
+            // Same rule the server applies: the gun tip must not be inside
+            // or behind a wall/cover block (reaching through cover).
+            if (PlayerCombat.IsMuzzleBlocked(combat.LocalEyePosition(), muzzlePoint.position))
+            {
+                OnShotBlocked(combat, ShotRejectReason.MuzzleBlocked);
+                PlayerCombat.NotifyLocalShotRejected(ShotRejectReason.MuzzleBlocked);
                 return;
             }
 
