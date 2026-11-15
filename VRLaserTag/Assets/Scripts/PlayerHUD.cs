@@ -10,8 +10,10 @@ using UnityEngine.UI;
 // - The canvas is fixed in the player's view (ComfortHud, "Lock To View")
 //   1.3 m away, and drawn on top of the arena (HudOverlay shader), so walls
 //   and cover never cut through it.
-// - Everything stays inside the central ~44 x 29 degrees of the view, where
-//   Quest lenses are sharp; the centre is kept clear for aiming.
+// - The panels sit towards the edges of the view (top bar high, health
+//   bottom-left, ammo bottom-right), like a flat-screen shooter, so the
+//   middle stays clear for aiming. Their angles and size are adjustable
+//   (Placement settings), also while the game runs in the Editor.
 // - There is no head-centred crosshair on purpose: in VR the shot follows
 //   the gun, not the head, so a crosshair in the middle of the view would
 //   point somewhere else than the gun.
@@ -47,8 +49,19 @@ public class PlayerHUD : MonoBehaviour
     [SerializeField] private float hitMarkerDuration = 0.15f;
     [SerializeField] private float goMessageDuration = 1.5f;
 
-    // Canvas size in canvas pixels (1 px = 1 mm with the HUD's 0.001 scale):
-    // 1.04 x 0.66 m at 1.3 m = about 44 x 29 degrees of the view.
+    [Header("Placement (degrees from the centre of the view)")]
+    [Tooltip("How far left / right the health and ammo panels sit.")]
+    [Range(8f, 35f)] [SerializeField] private float sideAngle = 25f;
+    [Tooltip("How far up the top bar and how far down the health and ammo panels sit.")]
+    [Range(8f, 30f)] [SerializeField] private float verticalAngle = 22f;
+    [Tooltip("Size of the panels (1 = original size).")]
+    [Range(0.7f, 1.6f)] [SerializeField] private float panelScale = 1.15f;
+
+    // HUD distance (1.3 m) in canvas pixels (1 px = 1 mm with the HUD's 0.001
+    // scale): turns a view angle into a position on the canvas.
+    private const float DistancePixels = 1300f;
+
+    // Nominal canvas size in canvas pixels (the panels may sit outside it).
     private static readonly Vector2 CanvasSize = new Vector2(1040f, 660f);
 
     private const int HealthSegments = 10;
@@ -70,6 +83,7 @@ public class PlayerHUD : MonoBehaviour
     private Image healthIcon;
     private Image hitMarkerImage;
     private RectTransform ammoBar;
+    private RectTransform timePanelRect, rankPanelRect, scorePanelRect, modeTagRect, healthPanelRect, ammoPanelRect;
     private readonly List<Image> healthFill = new List<Image>();
     private readonly List<Image> ammoFill = new List<Image>();
     private Material material;
@@ -423,6 +437,42 @@ public class PlayerHUD : MonoBehaviour
         ammoText = NewText(ammoPanel, "Value", new Vector2(60f, 18f), new Vector2(170f, 52f), 46, TextAnchor.MiddleRight, Color.white);
         ammoBar = NewRect(ammoPanel, "Bar", new Vector2(0f, -28f), new Vector2(292f, 14f));
         // Ammo segments are built on the first update (magazine size).
+
+        timePanelRect = timePanel;
+        rankPanelRect = rankPanel;
+        scorePanelRect = scorePanel;
+        modeTagRect = modeTag;
+        healthPanelRect = healthPanel;
+        ammoPanelRect = ammoPanel;
+        ApplyPlacement();
+    }
+
+    // Moves the panels to their view angles and applies the panel size.
+    private void ApplyPlacement()
+    {
+        float x = Mathf.Tan(sideAngle * Mathf.Deg2Rad) * DistancePixels;
+        float y = Mathf.Tan(verticalAngle * Mathf.Deg2Rad) * DistancePixels;
+        float s = panelScale;
+
+        PlacePanel(timePanelRect, 0f, y, s);
+        PlacePanel(rankPanelRect, -214f * s, y + 6f * s, s);
+        PlacePanel(scorePanelRect, 214f * s, y + 6f * s, s);
+        PlacePanel(modeTagRect, 0f, y - 76f * s, s);
+        PlacePanel(healthPanelRect, -x, -y, s);
+        PlacePanel(ammoPanelRect, x, -y, s);
+    }
+
+    private static void PlacePanel(RectTransform panel, float x, float y, float scale)
+    {
+        panel.anchoredPosition = new Vector2(x, y);
+        panel.localScale = new Vector3(scale, scale, 1f);
+    }
+
+    // Editor only: lets the Placement sliders be tuned while the game runs.
+    private void OnValidate()
+    {
+        if (Application.isPlaying && timePanelRect != null)
+            ApplyPlacement();
     }
 
     // Row of rounded segments: a dim background and a coloured fill each.
