@@ -6,7 +6,9 @@ using UnityEngine;
 // - Lock To View (default): the HUD is fixed in the view like a flat-screen
 //   game HUD. While the game runs it is a child of the headset camera, so it
 //   is drawn with exactly the pose the headset renders with: no lag, no
-//   jitter, no drift when walking, turning or teleporting.
+//   jitter, no drift when walking, turning or teleporting. With "Level With
+//   Horizon" (default) it only follows the head's heading: looking up or
+//   down does not move the bars, so they stay at a fixed height.
 // - Lazy follow (Lock To View off): the HUD lives under the XR Origin's
 //   "Camera Offset" and only turns once the view has moved more than a
 //   threshold angle away from it, then eases back to the centre.
@@ -28,6 +30,11 @@ public class ComfortHud : MonoBehaviour
 
     [Tooltip("Lock To View: how far below the centre of the view the HUD centre sits, in degrees.")]
     public float lockedPitchOffset = 0f;
+
+    [Tooltip("Lock To View: keep the HUD level with the horizon. It still turns with the head left and right, " +
+             "but does not tilt up or down (or roll), so the top and bottom bars stay at a fixed height " +
+             "and looking up or down moves the eyes towards them.")]
+    public bool levelWithHorizon = true;
 
     [Header("Placement")]
     [Tooltip("Preferred distance from the eyes, in metres.")]
@@ -88,12 +95,22 @@ public class ComfortHud : MonoBehaviour
     private void OnEnable()
     {
         NetworkVRPlayer.LocalRigPlaced += Snap;
+        Application.onBeforeRender += OnBeforeRender;
         Snap();
     }
 
     private void OnDisable()
     {
         NetworkVRPlayer.LocalRigPlaced -= Snap;
+        Application.onBeforeRender -= OnBeforeRender;
+    }
+
+    // The headset pose is updated once more just before rendering. A level
+    // HUD cancels the head's tilt, so it is re-applied with that final pose.
+    private void OnBeforeRender()
+    {
+        if (initialised && head != null && Locked && levelWithHorizon && transform.parent == head)
+            ApplyLocked();
     }
 
     // Puts the HUD straight in front of the view, without smoothing.
@@ -220,10 +237,35 @@ public class ComfortHud : MonoBehaviour
 
     private Quaternion LockedRotation => Quaternion.Euler(lockedPitchOffset, 0f, 0f);
 
-    // Lock To View: free distance straight ahead of the view.
+    // Lock To View: world rotation of the HUD. Level: only the head's
+    // heading (left/right) is used; otherwise the full head rotation.
+    private Quaternion LockedWorldRotation()
+    {
+        if (!levelWithHorizon)
+            return head.rotation * LockedRotation;
+
+        Vector3 up = followParent != null ? followParent.up : Vector3.up;
+        Vector3 forward = Vector3.ProjectOnPlane(head.forward, up);
+
+        // Looking (almost) straight up or down: the top of the head shows
+        // the heading instead.
+        if (forward.sqrMagnitude < 0.01f)
+            forward = Vector3.ProjectOnPlane(Vector3.Dot(head.forward, up) < 0f ? head.up : -head.up, up);
+
+        if (forward.sqrMagnitude > 0.0001f)
+            levelForward = forward.normalized;
+        else if (levelForward == Vector3.zero)
+            levelForward = Vector3.ProjectOnPlane(Vector3.forward, up).normalized;
+
+        return Quaternion.LookRotation(levelForward, up) * LockedRotation;
+    }
+
+    private Vector3 levelForward;
+
+    // Lock To View: free distance straight ahead of the HUD.
     private float LockedFreeDistance()
     {
-        Vector3 direction = head.rotation * (LockedRotation * Vector3.forward);
+        Vector3 direction = LockedWorldRotation() * Vector3.forward;
 
         if (Physics.SphereCast(head.position, 0.05f, direction, out RaycastHit hit, distance + wallGap,
             obstacleMask, QueryTriggerInteraction.Ignore))
@@ -236,9 +278,18 @@ public class ComfortHud : MonoBehaviour
 
     private void ApplyLocked()
     {
-        Quaternion rotation = LockedRotation;
-        transform.localPosition = rotation * Vector3.forward * currentDistance;
-        transform.localRotation = rotation;
+        if (levelWithHorizon)
+        {
+            Quaternion world = LockedWorldRotation();
+            transform.SetPositionAndRotation(head.position + world * Vector3.forward * currentDistance, world);
+        }
+        else
+        {
+            Quaternion rotation = LockedRotation;
+            transform.localPosition = rotation * Vector3.forward * currentDistance;
+            transform.localRotation = rotation;
+        }
+
         // Parent/XR rig scale must not be multiplied into the HUD's physical
         // pixels. Distance compensation preserves the same apparent size near cover.
         Vector3 parentScale = transform.parent != null ? transform.parent.lossyScale : Vector3.one;

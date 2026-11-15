@@ -133,7 +133,10 @@ public class HeadCollisionFade : MonoBehaviour
         float speed = target > alpha ? fadeInSpeed : fadeOutSpeed;
         float next = Mathf.MoveTowards(alpha, target, speed * Time.deltaTime);
 
-        IsViewBlocked = target >= 0.99f || next >= 0.9f;
+        bool blocked = target >= 0.99f || next >= 0.9f;
+        if (blocked != IsViewBlocked || (blocked && Time.unscaledTime >= nextBlockedLog))
+            LogState(blocked);
+        IsViewBlocked = blocked;
 
         if (!Mathf.Approximately(next, alpha))
         {
@@ -276,9 +279,32 @@ public class HeadCollisionFade : MonoBehaviour
     // Fade
     // ------------------------------------------------------------------
 
+    private float nextBlockedLog;
+    private Collider lastCollider;
+    private bool lastOutOfArena;
+
+    // Only on a change (and every 2 s while blocked): says what blocks the view.
+    private void LogState(bool blocked)
+    {
+        nextBlockedLog = Time.unscaledTime + 2f;
+        string cause = lastOutOfArena ? "outside the arena bounds " + arenaHalfSize
+            : lastCollider != null ? "collider '" + lastCollider.name + "' (" + lastCollider.GetType().Name +
+                                     ", parent '" + (lastCollider.transform.parent != null ? lastCollider.transform.parent.name : "-") +
+                                     "', bounds " + lastCollider.bounds + ")"
+            : "fading";
+        Debug.Log("[Fade] " + (blocked ? "VIEW BLOCKED: " + cause : "view clear") +
+                  " head=" + head.position.ToString("F2") + " headLocal=" + head.localPosition.ToString("F2") +
+                  " origin=" + (origin != null ? origin.transform.position.ToString("F2") : "-") +
+                  " body=" + bodyAnchor.ToString("F2") +
+                  " trackingReady=" + (NetworkVRPlayer.Local != null && NetworkVRPlayer.Local.IsTrackingReady));
+    }
+
     // 0 = clear view, 1 = head or body inside geometry, or out of the arena.
     private float Coverage(Vector3 position)
     {
+        lastOutOfArena = false;
+        lastCollider = null;
+
         // Arena and body checks only count once the player has been placed on
         // a spawn point: before joining, the rig's start position plus the
         // player's real position in their room may lie outside the walls,
@@ -288,7 +314,10 @@ public class HeadCollisionFade : MonoBehaviour
         {
             Vector3 local = position - arenaCenter;
             if (Mathf.Abs(local.x) > arenaHalfSize.x || Mathf.Abs(local.z) > arenaHalfSize.y)
+            {
+                lastOutOfArena = true;
                 return 1f;
+            }
 
             if (BodyInsideGeometry())
                 return 1f;
@@ -310,7 +339,10 @@ public class HeadCollisionFade : MonoBehaviour
 
             float value = gap <= 0f ? 1f : 1f - gap / fadeStartDistance;
             if (value > coverage)
+            {
                 coverage = value;
+                lastCollider = c;
+            }
         }
 
         return Mathf.Clamp01(coverage);
@@ -332,7 +364,10 @@ public class HeadCollisionFade : MonoBehaviour
         {
             Collider c = Overlaps[i];
             if (c != null && !ignoredColliders.Contains(c))
+            {
+                lastCollider = c;
                 return true;
+            }
         }
 
         return false;
