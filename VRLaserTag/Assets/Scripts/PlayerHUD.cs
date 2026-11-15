@@ -50,14 +50,14 @@ public class PlayerHUD : MonoBehaviour
     [SerializeField] private float goMessageDuration = 1.5f;
 
     [Header("Placement (degrees from the centre of the view)")]
-    // Defaults stay inside comfortable eye movement (about 25 degrees to the
-    // side, less upwards than downwards) and the sharp part of Quest lenses.
+    // Defaults put the panels near the corners of the view (flat-screen
+    // shooter style). Lower the angles if the text looks soft on Quest 2.
     [Tooltip("How far left / right the corner panels (rank, score, health, ammo) sit.")]
-    [Range(8f, 35f)] [SerializeField] private float sideAngle = 28f;
+    [Range(8f, 40f)] [SerializeField] private float sideAngle = 31f;
     [Tooltip("How far up the top row (rank, time, score) sits.")]
-    [Range(8f, 30f)] [SerializeField] private float topAngle = 19f;
+    [Range(8f, 38f)] [SerializeField] private float topAngle = 28f;
     [Tooltip("How far down the bottom row (health, ammo) sits.")]
-    [Range(8f, 30f)] [SerializeField] private float bottomAngle = 25f;
+    [Range(8f, 38f)] [SerializeField] private float bottomAngle = 29f;
     [Tooltip("Size of the panels (1 = original size).")]
     [Range(0.7f, 1.6f)] [SerializeField] private float panelScale = 1.45f;
 
