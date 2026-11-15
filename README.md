@@ -15,10 +15,12 @@ Take cover, teleport between positions and compete in a timed free-for-all match
 | Goal | Guide |
 | --- | --- |
 | Install the APK and join a match | [Setup, installation and controls](docs/SETUP.md) |
+| Review final submission readiness and assessment evidence | [Final submission and assessment report](docs/FINAL-SUBMISSION-REPORT.md) |
+| Download the final report | [Editable Word version](docs/Multiplayer-VR-Laser-Tag-Final-Report.docx) · [PDF for submission](docs/Multiplayer-VR-Laser-Tag-Final-Report.pdf) |
 | Understand authority and synchronization | [Architecture](docs/ARCHITECTURE.md) |
 | Review what has actually been tested | [Testing and evidence](docs/TESTING.md) |
 | Check assignment coverage and remaining work | [Requirements and submission checklist](docs/SUBMISSION-CHECKLIST.md) |
-| Read the technical report and contributions | [Combined report](docs/Technical-Report-and-Contributions.pdf) |
+| Read the technical report and contributions in Markdown | [Technical report](docs/TECHNICAL-REPORT.md) · [Contributions](docs/CONTRIBUTIONS.md) |
 | Review sources, licenses and AI assistance | [Credits and provenance](docs/CREDITS.md) |
 | Rehearse the live demonstration | [Demonstration plan](docs/DEMO.md) |
 

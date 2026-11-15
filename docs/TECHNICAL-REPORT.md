@@ -50,6 +50,8 @@ The Android build uses IL2CPP and ARM64. Meta Quest support and Oculus Touch, To
 
 ## Testing results and evidence
 
+The team also supplied a retrospective account of an earlier two-headset session (date, exact headset models, APK and network not recorded). The team reports that both players joined one environment and tested shooting, movement around cover, score display, respawn and reloading. The team says the session exposed wall/obstacle clipping and health/ammo indicators that were too close to the player's face; those issues were subsequently addressed. This account is not accompanied by logs or captures and is not treated as an independently verified final-build test. Its references to a generated game ID and Developer Mode being disabled do not match the current documented host-LAN-IP flow and sideload instructions, so those setup details need team confirmation. The current control guide specifies Right-controller A for a two-second reload; verify that binding on the delivered APK.
+
 | Check | Result and evidence limit |
 | --- | --- |
 | Earlier automated desktop matches | Local summaries report PASS for 3 and 5 players, both with all players staying and with one leaving. Remaining clients had identical final states. These are historical desktop results. |

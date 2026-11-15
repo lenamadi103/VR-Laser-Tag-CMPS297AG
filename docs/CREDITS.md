@@ -34,6 +34,6 @@ No repository-wide MIT or other open-source license is asserted or added. Decide
 
 ## AI assistance and verification
 
-OpenAI Codex/ChatGPT assistance supported HUD layout/scaling implementation, platform previews, build/static verification, requirement review and submission documentation. The team remains responsible for understanding, checking and explaining AI-assisted work. Confirm any other AI use that is not yet listed.
+OpenAI Codex/ChatGPT assistance supported HUD layout/scaling implementation, platform previews, build/static verification, requirement review and submission documentation. The team report also records Claude (Anthropic) assistance reviewing the report against the assignment brief. GitHub Copilot was used to refine the final submission report and map it to the supplied brief. The team remains responsible for understanding, checking and explaining AI-assisted work. Confirm any other AI use that is not yet listed.
 
 Verification includes desktop logs, live HUD-value comparisons, representative camera-projection checks, APK signature/manifest checks and the team's reported latest-APK three-player Quest 2/3 session on 15 November. These sources have different scope; no quantitative performance measurement or five-headset result is invented. AI did not independently observe the team's physical session.
