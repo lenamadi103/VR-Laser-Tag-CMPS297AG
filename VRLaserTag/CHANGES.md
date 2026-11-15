@@ -2,6 +2,38 @@
 
 Unity **6000.6.2f1** · Netcode for GameObjects **2.13.3** · Unity Transport **2.6.0** · XR Interaction Toolkit **3.6.1** · OpenXR **1.19.0** (new) · XR Plug-in Management **4.6.1** (new) · Input System **1.20.0** · URP **17.6.0**
 
+## Test-only bot
+
+The **PLAY AGAINST A BOT (TEST ONLY)** lobby button hosts a normal LAN
+session; the opponent is a separate Windows game instance, not a second
+headset. This requires a PC and the headset on the same network. The button
+does not launch the PC client automatically, and the bot is not an offline
+single-headset mode. The bot uses the normal player, combat, scoring and
+respawn paths. It moves towards the nearest opponent, tries to get around
+cover, and fires and reloads through the normal client requests.
+
+1. In Unity's Build Profiles, make **Development Build** builds for Android
+   (Quest) and Windows, with `Assets/ArenaScene.unity` enabled. The existing
+   `VR Laser Tag` build menu items make non-development builds and therefore
+   do not include this feature. Editor Play mode also includes the button.
+2. Launch the development build on the headset and select **PLAY AGAINST A
+   BOT (TEST ONLY)**. Note the host IP shown in the lobby.
+3. On the Windows PC, start the Windows development build from PowerShell,
+   substituting that IP and the actual path to the executable:
+
+   ```powershell
+   & "C:\path\to\VRLaserTag.exe" -lasertag-bot 192.168.1.10
+   ```
+
+4. Once the second player joins, press **START MATCH** in the headset. Use
+   the regular lobby controls to leave or play again. The bot exits when
+   the host disconnects; launch it again for a new session.
+
+The bot and button are compiled only in the Unity Editor and development
+builds. Do not distribute those builds. A normal release build contains
+neither. The bot behaves like a basic player, not a comprehensive multiplayer
+test; headset, Wi-Fi and gameplay still require real-device verification.
+
 The existing foundation (arena, XR Origin, teleport, Host–Client networking, avatar sync, initial spawning) was kept and extended. No working system was replaced.
 
 ---
