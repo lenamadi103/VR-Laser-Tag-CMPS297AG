@@ -49,7 +49,17 @@ public class PlayerHUD : MonoBehaviour
     [SerializeField] private float hitMarkerDuration = 0.15f;
     [SerializeField] private float goMessageDuration = 1.5f;
 
-    [Header("Placement (degrees from the centre of the view)")]
+    [Header("Placement: fitted to the headset")]
+    [Tooltip("On: the panels are placed from the headset's own field of view (read from its projection), so Quest 2, Quest 3 and the desktop window each get the same layout. Off: the fixed angles below are used.")]
+    [SerializeField] private bool fitToHeadset = true;
+    [Tooltip("Outer edge of the side panels, as a share of the half-width that BOTH eyes can see (0 = centre, 1 = edge of the two-eye area).")]
+    [Range(0.4f, 1f)] [SerializeField] private float sideFill = 0.78f;
+    [Tooltip("Top edge of the top row, as a share of the view above the centre.")]
+    [Range(0.3f, 0.9f)] [SerializeField] private float topFill = 0.5f;
+    [Tooltip("Bottom edge of the bottom row, as a share of the view below the centre.")]
+    [Range(0.3f, 0.9f)] [SerializeField] private float bottomFill = 0.5f;
+
+    [Header("Placement: fixed angles (used when Fit To Headset is off)")]
     // Defaults put the panels near the corners of the view (flat-screen
     // shooter style). Lower the angles if the text looks soft on Quest 2.
     [Tooltip("How far left / right the corner panels (rank, score, health, ammo) sit.")]
@@ -88,6 +98,9 @@ public class PlayerHUD : MonoBehaviour
     private Image hitMarkerImage;
     private RectTransform ammoBar;
     private RectTransform timePanelRect, rankPanelRect, scorePanelRect, modeTagRect, healthPanelRect, ammoPanelRect;
+    private Camera viewCamera;
+    private float fitKey;
+    private float nextFitCheck;
     private readonly List<Image> healthFill = new List<Image>();
     private readonly List<Image> ammoFill = new List<Image>();
     private Material material;
@@ -133,6 +146,23 @@ public class PlayerHUD : MonoBehaviour
 
     private void Update()
     {
+        // The headset reports its field of view only once XR is running (and
+        // the desktop window can be resized): re-fit when it changes.
+        if (fitToHeadset && Time.unscaledTime >= nextFitCheck)
+        {
+            nextFitCheck = Time.unscaledTime + 0.5f;
+
+            if (TryGetViewLimits(out float side, out float up, out float down))
+            {
+                float key = side + 7f * up + 53f * down;
+                if (Mathf.Abs(key - fitKey) > 0.005f)
+                {
+                    fitKey = key;
+                    ApplyPlacement();
+                }
+            }
+        }
+
         PlayerCombat combat = PlayerCombat.Local;
         MatchManager match = MatchManager.Instance;
         bool inGame = combat != null && combat.IsSpawned;
@@ -454,10 +484,23 @@ public class PlayerHUD : MonoBehaviour
     // Moves the panels to their view angles and applies the panel size.
     private void ApplyPlacement()
     {
-        float x = Mathf.Tan(sideAngle * Mathf.Deg2Rad) * DistancePixels;
-        float top = Mathf.Tan(topAngle * Mathf.Deg2Rad) * DistancePixels;
-        float bottom = Mathf.Tan(bottomAngle * Mathf.Deg2Rad) * DistancePixels;
         float s = panelScale;
+        float x, top, bottom;
+
+        if (fitToHeadset && TryGetViewLimits(out float side, out float up, out float down))
+        {
+            // Outer edges of the panels at a share of what the headset shows
+            // (half sizes: health/ammo 170 px wide, time 56 px, health 54 px high).
+            x = Mathf.Max(side * sideFill * DistancePixels - 170f * s, 190f * s);
+            top = Mathf.Max(up * topFill * DistancePixels - 56f * s, 120f);
+            bottom = Mathf.Max(down * bottomFill * DistancePixels - 54f * s, 120f);
+        }
+        else
+        {
+            x = Mathf.Tan(sideAngle * Mathf.Deg2Rad) * DistancePixels;
+            top = Mathf.Tan(topAngle * Mathf.Deg2Rad) * DistancePixels;
+            bottom = Mathf.Tan(bottomAngle * Mathf.Deg2Rad) * DistancePixels;
+        }
 
         // Four corners: rank and score above health and ammo, with their
         // outer edges lined up (the top panels are 148 px narrower).
@@ -469,6 +512,40 @@ public class PlayerHUD : MonoBehaviour
         PlacePanel(scorePanelRect, cornerX, top, s);
         PlacePanel(healthPanelRect, -x, -bottom, s);
         PlacePanel(ammoPanelRect, x, -bottom, s);
+    }
+
+    // How far the view reaches from its centre, as tangents of the angles,
+    // read from the projection the device renders with. In a headset the
+    // per-eye projection is asymmetric: 'side' is the smaller of the two
+    // horizontal limits, which is the area both eyes can see. Panels placed
+    // further out would be visible to one eye only, which is uncomfortable.
+    private bool TryGetViewLimits(out float side, out float up, out float down)
+    {
+        side = up = down = 0f;
+
+        if (viewCamera == null)
+        {
+            Canvas canvas = GetComponent<Canvas>();
+            viewCamera = canvas != null && canvas.worldCamera != null ? canvas.worldCamera : Camera.main;
+        }
+
+        if (viewCamera == null)
+            return false;
+
+        Matrix4x4 m = viewCamera.stereoEnabled
+            ? viewCamera.GetStereoProjectionMatrix(Camera.StereoscopicEye.Left)
+            : viewCamera.projectionMatrix;
+
+        if (Mathf.Abs(m.m00) < 0.0001f || Mathf.Abs(m.m11) < 0.0001f)
+            return false;
+
+        float right = (1f + m.m02) / m.m00;
+        float left = (1f - m.m02) / m.m00;
+        up = (1f + m.m12) / m.m11;
+        down = (1f - m.m12) / m.m11;
+        side = Mathf.Min(left, right);
+
+        return side > 0.2f && up > 0.2f && down > 0.2f;
     }
 
     private static void PlacePanel(RectTransform panel, float x, float y, float scale)
