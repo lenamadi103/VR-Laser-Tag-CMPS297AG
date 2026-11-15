@@ -283,3 +283,20 @@ The Floor is on the Default layer like walls and cover, so a head within ~22 cm 
 
 - The editor HUD preview (`LaserTagPreview.BatchRenderHud`) still shows the old scene panels; the new layout only appears when the game runs.
 - ❌ Not yet verified in Unity: compile, the HUD in Play mode / Windows build, and on a headset (readability on Quest 2 and Quest 3, comfort of the fixed HUD while moving).
+
+---
+
+## 10. Solid walls and cover (push-back)
+
+**Problem:** a player hiding behind a block could physically walk into it and come out on the other side. The wall fade only checked the head, and on the 1.5 m boxes (`Cover3`, `Cover4`) the head stays above the block, so nothing happened.
+
+**Fix** (`HeadCollisionFade`, no scene changes):
+
+- **Push-back:** the local player's head (kept 0.24 m from surfaces) and body (a column 0.18 m wide from 0.3 m above the floor to just below the head) are kept out of walls and cover. When they touch a block, the XR Origin is moved back horizontally by the same amount, so the player stays at the surface, like walking into a real wall. Walking at an angle slides along the face. The body follows the head with 0.25 m of slack, so leaning (for example around a corner) does not move the feet.
+- **Fallback:** corrections larger than 0.3 m in one frame are not applied (no sudden jumps); the fade takes over instead, and it now also triggers when the body, not only the head, is inside a block.
+- Push-back keeps the head out of the fade zone, so touching a wall no longer dims the view.
+- Settings on the HeadCollisionFade component (ViewOverlay): Push Back, Head Clearance, Body Radius, Lean Slack, Max Correction.
+
+**Checked:** a simulation of the same logic against the arena's real block sizes. Walking at 1.4 m/s into Cover1-5 and the outer walls (standing, tall and crouching players, straight and diagonal) always stopped at the surface with no fade, and never came out on the other side. Players of average height cannot push their head out over the top of a low box (taller players can).
+
+- ❌ Not yet verified in Unity or on a headset: how the push-back feels while walking, and that it does not disturb teleporting, spawning or the automated tests.
