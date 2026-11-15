@@ -5321,6 +5321,31 @@ MonoBehaviour:
   feedDuration: 2
   hitMarkerDuration: 0.15
   goMessageDuration: 1.5
+  profile: 0
+  windows:
+    topOffset: 0.78
+    sideOffset: 0.76
+    bottomOffset: 0.83
+    topBarWidth: 704
+    topScale: 1.7
+    bottomScale: 2
+    distance: 1.3
+  quest2:
+    topOffset: 40
+    sideOffset: 30
+    bottomOffset: 38
+    topBarWidth: 704
+    topScale: 1.9
+    bottomScale: 2.2
+    distance: 1.3
+  quest3:
+    topOffset: 43
+    sideOffset: 32
+    bottomOffset: 44
+    topBarWidth: 704
+    topScale: 2.3
+    bottomScale: 2.7
+    distance: 1.3
 --- !u!114 &457557491
 MonoBehaviour:
   m_ObjectHideFlags: 0

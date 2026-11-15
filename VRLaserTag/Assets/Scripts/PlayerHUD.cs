@@ -87,27 +87,32 @@ public class PlayerHUD : MonoBehaviour
     [Tooltip("Desktop window. Offsets are shares of the window from its centre (0 = centre, 1 = edge).")]
     [SerializeField] private HudLayout windows = new HudLayout
     {
-        topOffset = 0.56f, sideOffset = 0.72f, bottomOffset = 0.78f,
-        topBarWidth = 1300f, topScale = 1.1f, bottomScale = 1.2f, distance = 1.3f,
+        topOffset = 0.78f, sideOffset = 0.76f, bottomOffset = 0.83f,
+        topBarWidth = 704f, topScale = 1.7f, bottomScale = 2f, distance = 1.3f,
     };
 
     [Tooltip("Quest 2 (and Quest 3S). Offsets are degrees from the centre of the view.")]
     [SerializeField] private HudLayout quest2 = new HudLayout
     {
-        topOffset = 27f, sideOffset = 26f, bottomOffset = 31f,
-        topBarWidth = 1000f, topScale = 1.2f, bottomScale = 1.3f, distance = 1.3f,
+        topOffset = 40f, sideOffset = 30f, bottomOffset = 38f,
+        topBarWidth = 704f, topScale = 1.9f, bottomScale = 2.2f, distance = 1.3f,
     };
 
     [Tooltip("Quest 3 (and Quest Pro). Offsets are degrees from the centre of the view.")]
     [SerializeField] private HudLayout quest3 = new HudLayout
     {
-        topOffset = 26f, sideOffset = 25f, bottomOffset = 34f,
-        topBarWidth = 1000f, topScale = 1.3f, bottomScale = 1.4f, distance = 1.3f,
+        topOffset = 43f, sideOffset = 32f, bottomOffset = 44f,
+        topBarWidth = 704f, topScale = 2.3f, bottomScale = 2.7f, distance = 1.3f,
     };
 
     // Nominal canvas size in canvas pixels (the panels may sit outside it).
     private static readonly Vector2 CanvasSize = new Vector2(1040f, 660f);
 
+    // Shared physical unit used by placement and ComfortHud. CanvasScaler's
+    // dynamicPixelsPerUnit controls raster quality, not visible world size.
+    public const float MetresPerCanvasUnit = 0.001f;
+    private const float ReferenceDistance = 1.3f;
+    private const float ViewMargin = 0.94f;
     private const int HealthSegments = 10;
 
     private static readonly Color Cyan = new Color(0.3f, 0.85f, 1f);
@@ -468,6 +473,8 @@ public class PlayerHUD : MonoBehaviour
         // whole bar; the time section sits on top of it, slightly larger.
         topBarRect = NewRect(stats, "TopBar", new Vector2(0f, 262f), new Vector2(1000f, 118f));
         barFrameRect = NewPanel(topBarRect, "Frame", Vector2.zero, new Vector2(1000f, 88f), Cyan);
+        barFrameRect.GetComponent<Image>().sprite = HudArt.ConnectedFrameFill;
+        barFrameRect.GetChild(0).GetComponent<Image>().sprite = HudArt.ConnectedFrameLine;
 
         rankSectionRect = NewRect(topBarRect, "Rank", new Vector2(-390f, 0f), new Vector2(200f, 88f));
         NewImage(rankSectionRect, "Icon", new Vector2(-34f, 18f), new Vector2(26f, 26f), HudArt.Trophy, LabelColor);
@@ -521,48 +528,67 @@ public class PlayerHUD : MonoBehaviour
         HudProfile active = profile == HudProfile.Auto ? DetectProfile() : profile;
         HudLayout layout = active == HudProfile.Windows ? windows : active == HudProfile.Quest3 ? quest3 : quest2;
 
-        // 1 canvas pixel = 1 mm at the HUD distance.
-        float distancePixels = Mathf.Max(0.5f, layout.distance) * 1000f;
+        // Work in the same physical units as the world-space canvas. Changing
+        // reading distance must not accidentally shrink the readable angular size.
+        float readingDistance = Mathf.Max(0.5f, layout.distance);
+        float distancePixels = readingDistance / MetresPerCanvasUnit;
         if (comfortHud != null)
-            comfortHud.distance = Mathf.Max(0.5f, layout.distance);
+            comfortHud.distance = readingDistance;
+
+        if (!hasView)
+        {
+            side = active == HudProfile.Windows ? 1.0264f : 0.85f;
+            up = down = active == HudProfile.Windows ? 0.57735f : 1f;
+        }
+
+        float sizeFactor = readingDistance / ReferenceDistance;
+        if (active == HudProfile.Windows)
+            sizeFactor *= (up + down) / (2f * 0.57735f);
+
+        float topScale = Mathf.Max(0.1f, layout.topScale) * sizeFactor;
+        float bottomScale = Mathf.Max(0.1f, layout.bottomScale) * sizeFactor;
+        float sideLimit = side * distancePixels * ViewMargin;
+        float upLimit = up * distancePixels * ViewMargin;
+        float downLimit = down * distancePixels * ViewMargin;
 
         float x, top, bottom;
-
         if (active == HudProfile.Windows)
         {
-            // Shares of the window, measured from its centre.
-            if (!hasView)
-            {
-                side = 1.026f; // 60 degree camera, 16:9
-                up = down = 0.577f;
-            }
-
             x = side * layout.sideOffset * distancePixels;
             top = up * layout.topOffset * distancePixels;
             bottom = down * layout.bottomOffset * distancePixels;
         }
         else
         {
-            // View angles from the direction the head faces.
             x = Mathf.Tan(layout.sideOffset * Mathf.Deg2Rad) * distancePixels;
             top = Mathf.Tan(layout.topOffset * Mathf.Deg2Rad) * distancePixels;
             bottom = Mathf.Tan(layout.bottomOffset * Mathf.Deg2Rad) * distancePixels;
         }
 
-        // Top bar: frame width, rank and score at its two ends.
-        float width = Mathf.Max(700f, layout.topBarWidth);
+        // Fit the complete bar (not just its centre) inside the binocular-safe
+        // view. Shorten its connected frame before reducing text size.
+        const float minimumBarWidth = 684f;
+        topScale = Mathf.Min(topScale, 2f * sideLimit / minimumBarWidth);
+        float width = Mathf.Clamp(layout.topBarWidth, minimumBarWidth, 2f * sideLimit / topScale);
         Vector2 frameSize = new Vector2(width, barFrameRect.sizeDelta.y);
+        topBarRect.sizeDelta = new Vector2(width, 118f);
         barFrameRect.sizeDelta = frameSize;
-        if (barFrameRect.childCount > 0)
-            ((RectTransform)barFrameRect.GetChild(0)).sizeDelta = frameSize; // outline
-
+        ((RectTransform)barFrameRect.GetChild(0)).sizeDelta = frameSize;
         float end = width * 0.5f - 110f;
         rankSectionRect.anchoredPosition = new Vector2(-end, 0f);
         scoreSectionRect.anchoredPosition = new Vector2(end, 0f);
 
-        PlacePanel(topBarRect, 0f, top, layout.topScale);
-        PlacePanel(healthPanelRect, -x, -bottom, layout.bottomScale);
-        PlacePanel(ammoPanelRect, x, -bottom, layout.bottomScale);
+        // Top includes the time panel; its lower edge includes FREE FOR ALL.
+        top = Mathf.Clamp(top, -downLimit + 102f * topScale, upLimit - 59f * topScale);
+        bottomScale = Mathf.Min(bottomScale, sideLimit / 360f);
+        float halfWidth = 170f * bottomScale;
+        float halfHeight = 54f * bottomScale;
+        x = Mathf.Clamp(x, halfWidth, Mathf.Max(halfWidth, sideLimit - halfWidth));
+        bottom = Mathf.Clamp(bottom, 0f, Mathf.Max(0f, downLimit - halfHeight));
+
+        PlacePanel(topBarRect, 0f, top, topScale);
+        PlacePanel(healthPanelRect, -x, -bottom, bottomScale);
+        PlacePanel(ammoPanelRect, x, -bottom, bottomScale);
     }
 
     // Desktop when the camera is not rendering in stereo; otherwise the

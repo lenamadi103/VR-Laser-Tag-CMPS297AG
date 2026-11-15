@@ -81,7 +81,7 @@ public class ComfortHud : MonoBehaviour
 
     private void Awake()
     {
-        baseScale = transform.localScale;
+        baseScale = Vector3.one * PlayerHUD.MetresPerCanvasUnit;
         followParent = transform.parent;
     }
 
@@ -103,7 +103,7 @@ public class ComfortHud : MonoBehaviour
             return;
 
         if (baseScale == Vector3.zero)
-            baseScale = transform.localScale;
+            baseScale = Vector3.one * PlayerHUD.MetresPerCanvasUnit;
 
         if (Locked)
         {
@@ -239,7 +239,14 @@ public class ComfortHud : MonoBehaviour
         Quaternion rotation = LockedRotation;
         transform.localPosition = rotation * Vector3.forward * currentDistance;
         transform.localRotation = rotation;
-        transform.localScale = baseScale * (currentDistance / distance);
+        // Parent/XR rig scale must not be multiplied into the HUD's physical
+        // pixels. Distance compensation preserves the same apparent size near cover.
+        Vector3 parentScale = transform.parent != null ? transform.parent.lossyScale : Vector3.one;
+        Vector3 physicalScale = baseScale * (currentDistance / distance);
+        transform.localScale = new Vector3(
+            physicalScale.x / Mathf.Max(0.0001f, Mathf.Abs(parentScale.x)),
+            physicalScale.y / Mathf.Max(0.0001f, Mathf.Abs(parentScale.y)),
+            physicalScale.z / Mathf.Max(0.0001f, Mathf.Abs(parentScale.z)));
     }
 
     // Distance available in front of the eyes before a wall or cover.
@@ -266,7 +273,14 @@ public class ComfortHud : MonoBehaviour
         // when looked at along its forward axis), and it stays upright.
         transform.localPosition = smoothedHead + rotation * Vector3.forward * currentDistance;
         transform.localRotation = rotation;
-        transform.localScale = baseScale * (currentDistance / distance);
+        // Parent/XR rig scale must not be multiplied into the HUD's physical
+        // pixels. Distance compensation preserves the same apparent size near cover.
+        Vector3 parentScale = transform.parent != null ? transform.parent.lossyScale : Vector3.one;
+        Vector3 physicalScale = baseScale * (currentDistance / distance);
+        transform.localScale = new Vector3(
+            physicalScale.x / Mathf.Max(0.0001f, Mathf.Abs(parentScale.x)),
+            physicalScale.y / Mathf.Max(0.0001f, Mathf.Abs(parentScale.y)),
+            physicalScale.z / Mathf.Max(0.0001f, Mathf.Abs(parentScale.z)));
     }
 
     // Head position and heading in the HUD's parent space (Camera Offset).

@@ -471,3 +471,234 @@ public static class LaserTagPreview
         Object.DestroyImmediate(rt);
     }
 }
+
+
+// HUD-only review tools. All camera/visibility changes below are temporary;
+// neither the scene nor any gameplay state is saved by the capture command.
+public static class LaserTagHudReview
+{
+    private const System.Reflection.BindingFlags Fields = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
+    private static string Output => Path.GetFullPath(Path.Combine(Application.dataPath,
+        "../Builds/HudReview"));
+
+    [MenuItem("VR Laser Tag/HUD/Apply Approved HUD Profiles")]
+    public static void ApplyProfiles()
+    {
+        PlayerHUD hud = Object.FindAnyObjectByType<PlayerHUD>(FindObjectsInactive.Include);
+        if (hud == null) throw new System.InvalidOperationException("PlayerHUD was not found.");
+        Undo.RecordObject(hud, "Apply approved HUD profiles");
+        var so = new SerializedObject(hud);
+        so.FindProperty("profile").enumValueIndex = (int)HudProfile.Auto;
+        SetProfile(so.FindProperty("windows"), .78f, .76f, .83f, 704f, 1.7f, 2f);
+        SetProfile(so.FindProperty("quest2"), 40f, 30f, 38f, 704f, 1.9f, 2.2f);
+        SetProfile(so.FindProperty("quest3"), 43f, 32f, 44f, 704f, 2.3f, 2.7f);
+        so.ApplyModifiedProperties();
+        Selection.activeGameObject = hud.gameObject;
+        Debug.Log("[HUD Review] Applied independent HUD profiles only; Auto detection retained.");
+    }
+
+    private static void SetProfile(SerializedProperty p, float top, float side, float bottom, float width, float topScale, float bottomScale)
+    {
+        p.FindPropertyRelative("topOffset").floatValue = top;
+        p.FindPropertyRelative("sideOffset").floatValue = side;
+        p.FindPropertyRelative("bottomOffset").floatValue = bottom;
+        p.FindPropertyRelative("topBarWidth").floatValue = width;
+        p.FindPropertyRelative("topScale").floatValue = topScale;
+        p.FindPropertyRelative("bottomScale").floatValue = bottomScale;
+        p.FindPropertyRelative("distance").floatValue = 1.3f;
+    }
+
+    [MenuItem("VR Laser Tag/HUD/Capture Layout Previews (Play Mode)")]
+    public static void Capture()
+    {
+        if (!Application.isPlaying) throw new System.InvalidOperationException("Enter Play Mode first.");
+        PlayerHUD hud = Object.FindAnyObjectByType<PlayerHUD>();
+        Camera camera = Camera.main;
+        ComfortHud comfort = hud.GetComponent<ComfortHud>();
+        var stats = (GameObject)Field(hud, "statsGroup");
+        var texts = hud.GetComponentsInChildren<UnityEngine.UI.Text>(true);
+        var textValues = new string[texts.Length];
+        for (int i = 0; i < texts.Length; i++) textValues[i] = texts[i].text;
+        var originalProfile = (HudProfile)Field(hud, "profile");
+        Vector3 position = camera.transform.position;
+        Quaternion rotation = camera.transform.rotation;
+        Matrix4x4 projection = camera.projectionMatrix;
+        float fov = camera.fieldOfView, aspect = camera.aspect;
+        RenderTexture target = camera.targetTexture;
+        bool active = stats.activeSelf;
+        var hidden = new System.Collections.Generic.List<Renderer>();
+        Transform rig = camera.GetComponentInParent<Unity.XR.CoreUtils.XROrigin>().transform;
+        foreach (Renderer renderer in rig.GetComponentsInChildren<Renderer>())
+            if (renderer.enabled) { hidden.Add(renderer); renderer.enabled = false; }
+        var canvases = new System.Collections.Generic.List<Canvas>();
+        foreach (Canvas canvas in Object.FindObjectsByType<Canvas>(FindObjectsSortMode.None))
+            if (canvas.enabled && canvas.transform != hud.transform) { canvases.Add(canvas); canvas.enabled = false; }
+
+        bool live = PlayerCombat.Local != null && PlayerCombat.Local.IsSpawned;
+        bool previewAmmo = false;
+        var ammoFills = (System.Collections.Generic.List<UnityEngine.UI.Image>)Field(hud, "ammoFill");
+        var healthFills = (System.Collections.Generic.List<UnityEngine.UI.Image>)Field(hud, "healthFill");
+        try
+        {
+            Directory.CreateDirectory(Output);
+            File.WriteAllText(Path.Combine(Output, "layout-audit.txt"), "HUD projection bounds checks\n");
+            stats.SetActive(true);
+            if (live)
+                typeof(PlayerHUD).GetMethod("UpdateStats", Fields).Invoke(hud, new object[] { PlayerCombat.Local, MatchManager.Instance });
+            else
+            {
+                Text(hud, "rankValue").text = "#2";
+                Text(hud, "timerText").text = "3:29";
+                Text(hud, "scoreText").text = "0";
+                Text(hud, "healthText").text = "100<size=22> HP</size>";
+                Text(hud, "ammoText").text = "10<size=26> / 10</size>";
+                if (ammoFills.Count == 0)
+                {
+                    typeof(PlayerHUD).GetMethod("BuildSegments", Fields).Invoke(hud, new object[] { Field(hud, "ammoBar"), ammoFills, 10 });
+                    previewAmmo = true;
+                }
+                foreach (var fill in healthFills) { fill.enabled = true; fill.color = new Color(.3f, .95f, .45f); }
+                foreach (var fill in ammoFills) { fill.enabled = true; fill.color = new Color(1f, .6f, .18f); }
+            }
+            Text(hud, "centerText").text = "";
+            Text(hud, "feedText").text = "";
+            camera.transform.SetPositionAndRotation(new Vector3(0f, 1.65f, -5.5f), Quaternion.identity);
+            CaptureOne(hud, comfort, camera, HudProfile.Windows, 1280, 720, 60f, "windows-preview.png");
+            CaptureOne(hud, comfort, camera, HudProfile.Quest2, 1100, 1100, 90f, "quest2-preview.png");
+            CaptureOne(hud, comfort, camera, HudProfile.Quest3, 1100, 1100, 96f, "quest3-preview.png");
+            // The same layout must remain visible in asymmetric left/right
+            // eye projections and retain its size when brought in front of cover.
+            foreach (bool rightEye in new[] { false, true })
+            {
+                camera.projectionMatrix = rightEye
+                    ? Matrix4x4.Frustum(-.0085f, .011f, -.01f, .01f, .01f, 100f)
+                    : Matrix4x4.Frustum(-.011f, .0085f, -.01f, .01f, .01f, 100f);
+                foreach (HudProfile q in new[] { HudProfile.Quest2, HudProfile.Quest3 })
+                {
+                    typeof(PlayerHUD).GetField("profile", Fields).SetValue(hud, q);
+                    typeof(PlayerHUD).GetMethod("ApplyPlacement", Fields).Invoke(hud, null);
+                    comfort.Snap(); Canvas.ForceUpdateCanvases();
+                    Audit(hud, camera, q + (rightEye ? " right-eye simulation" : " left-eye simulation"));
+                }
+            }
+            camera.fieldOfView = 60f; camera.aspect = 1280f / 720f; camera.ResetProjectionMatrix();
+            typeof(PlayerHUD).GetField("profile", Fields).SetValue(hud, HudProfile.Windows);
+            typeof(PlayerHUD).GetMethod("ApplyPlacement", Fields).Invoke(hud, null);
+            camera.transform.SetPositionAndRotation(new Vector3(0f, 1.65f, -5.5f), Quaternion.identity);
+            Physics.SyncTransforms(); comfort.Snap();
+            Rect before = ViewRect((RectTransform)Field(hud, "healthPanelRect"), camera);
+            camera.transform.SetPositionAndRotation(new Vector3(-3.5f, 1.65f, 1.9f), Quaternion.identity);
+            Physics.SyncTransforms(); comfort.Snap();
+            Rect after = ViewRect((RectTransform)Field(hud, "healthPanelRect"), camera);
+            if (Mathf.Abs(before.width - after.width) > .001f || Mathf.Abs(before.height - after.height) > .001f)
+                throw new System.InvalidOperationException("HUD angular size changed near cover.");
+            Audit(hud, camera, "Windows near cover; constant angular size PASS");
+            File.WriteAllText(Path.Combine(Output, "preview-context.txt"),
+                "Revision: " + "HUD layout review\n" +
+                "Data: " + (live ? "live synchronized gameplay values" : "labelled design samples; no gameplay state changed") + "\n" +
+                "Windows: 1280x720, 60 degree vertical projection.\n" +
+                "Quest 2: 1100x1100, representative 90 degree mono eye preview.\n" +
+                "Quest 3: 1100x1100, representative 96 degree mono eye preview.\n" +
+                "Quest images are layout simulations, not headset captures. No headset performance claim.\n");
+            Debug.Log("[HUD Review] Captured all three layouts: " + Output + "; live=" + live);
+        }
+        finally
+        {
+            camera.targetTexture = target;
+            camera.fieldOfView = fov; camera.aspect = aspect; camera.projectionMatrix = projection;
+            camera.transform.SetPositionAndRotation(position, rotation);
+            typeof(PlayerHUD).GetField("profile", Fields).SetValue(hud, originalProfile);
+            typeof(PlayerHUD).GetMethod("ApplyPlacement", Fields).Invoke(hud, null);
+            comfort.Snap();
+            for (int i = 0; i < texts.Length; i++) if (texts[i] != null) texts[i].text = textValues[i];
+            stats.SetActive(active);
+            foreach (Renderer renderer in hidden) if (renderer != null) renderer.enabled = true;
+            foreach (Canvas canvas in canvases) if (canvas != null) canvas.enabled = true;
+            if (previewAmmo)
+            {
+                Transform row = (Transform)Field(hud, "ammoBar");
+                for (int i = row.childCount - 1; i >= 0; i--) Object.DestroyImmediate(row.GetChild(i).gameObject);
+                ammoFills.Clear();
+            }
+        }
+    }
+
+    private static void CaptureOne(PlayerHUD hud, ComfortHud comfort, Camera camera, HudProfile profile, int width, int height, float fov, string file)
+    {
+        camera.fieldOfView = fov; camera.aspect = (float)width / height; camera.ResetProjectionMatrix();
+        typeof(PlayerHUD).GetField("profile", Fields).SetValue(hud, profile);
+        typeof(PlayerHUD).GetMethod("ApplyPlacement", Fields).Invoke(hud, null);
+        Physics.SyncTransforms();
+        comfort.Snap(); Canvas.ForceUpdateCanvases();
+        Audit(hud, camera, profile.ToString());
+        RenderTexture rt = RenderTexture.GetTemporary(width, height, 24, RenderTextureFormat.ARGB32);
+        RenderTexture previous = RenderTexture.active;
+        Texture2D image = null;
+        try
+        {
+            camera.targetTexture = rt; camera.Render(); RenderTexture.active = rt;
+            image = new Texture2D(width, height, TextureFormat.RGB24, false);
+            image.ReadPixels(new Rect(0, 0, width, height), 0, 0); image.Apply();
+            File.WriteAllBytes(Path.Combine(Output, file), image.EncodeToPNG());
+        }
+        finally
+        {
+            camera.targetTexture = null; RenderTexture.active = previous;
+            if (image != null) Object.DestroyImmediate(image);
+            RenderTexture.ReleaseTemporary(rt);
+        }
+    }
+
+    private static Rect ViewRect(RectTransform panel, Camera camera)
+    {
+        var corners = new Vector3[4]; panel.GetWorldCorners(corners);
+        Vector2 min = Vector2.one * float.PositiveInfinity, max = Vector2.one * float.NegativeInfinity;
+        foreach (Vector3 corner in corners)
+        {
+            Vector3 point = camera.WorldToViewportPoint(corner);
+            if (point.z <= 0f) throw new System.InvalidOperationException("HUD behind the preview camera.");
+            min = Vector2.Min(min, point); max = Vector2.Max(max, point);
+        }
+        return Rect.MinMaxRect(min.x, min.y, max.x, max.y);
+    }
+
+    private static void Audit(PlayerHUD hud, Camera camera, string label)
+    {
+        Transform top = (Transform)Field(hud, "topBarRect");
+        foreach (RectTransform panel in new[] { (RectTransform)Field(hud, "barFrameRect"),
+            (RectTransform)top.Find("Time"), (RectTransform)top.Find("ModeTag"),
+            (RectTransform)Field(hud, "healthPanelRect"), (RectTransform)Field(hud, "ammoPanelRect") })
+        {
+            Rect bounds = ViewRect(panel, camera);
+            if (bounds.xMin < -.001f || bounds.yMin < -.001f || bounds.xMax > 1.001f || bounds.yMax > 1.001f)
+                throw new System.InvalidOperationException(label + " clips " + panel.name + ": " + bounds);
+        }
+        File.AppendAllText(Path.Combine(Output, "layout-audit.txt"), label + ": all five panel bounds PASS\n");
+    }
+
+    [MenuItem("VR Laser Tag/HUD/Validate Live HUD Values")]
+    public static void ValidateLive()
+    {
+        PlayerHUD hud = Object.FindAnyObjectByType<PlayerHUD>();
+        PlayerCombat combat = PlayerCombat.Local;
+        MatchManager match = MatchManager.Instance;
+        if (!Application.isPlaying || combat == null || !combat.IsSpawned || match == null || !match.IsSpawned)
+            throw new System.InvalidOperationException("Connect to a live match first.");
+        typeof(PlayerHUD).GetMethod("UpdateStats", Fields).Invoke(hud, new object[] { combat, match });
+        PlayerInfo info = PlayerInfo.FindByClientId(combat.OwnerClientId);
+        string expectedRank = "#" + (MatchManager.GetStandings().IndexOf(info) + 1);
+        bool health = Text(hud, "healthText").text.StartsWith(combat.Health.Value.ToString() + "<");
+        bool ammo = combat.IsReloading.Value ? Text(hud, "ammoText").text.Contains("RELOADING") : Text(hud, "ammoText").text.StartsWith(combat.Ammo.Value.ToString() + "<");
+        bool score = Text(hud, "scoreText").text == info.Score.Value.ToString();
+        bool rank = Text(hud, "rankValue").text == expectedRank;
+        string expectedTime = (string)typeof(PlayerHUD).GetMethod("DescribeTimer", System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic).Invoke(null, new object[] { match });
+        bool timer = Text(hud, "timerText").text == expectedTime;
+        string result = "Health=" + health + " (" + combat.Health.Value + "), Ammo=" + ammo + " (" + combat.Ammo.Value + "), Rank=" + rank + ", Score=" + score + " (" + info.Score.Value + "), Time=" + timer + " (" + expectedTime + ")";
+        Directory.CreateDirectory(Output); File.AppendAllText(Path.Combine(Output, "live-values.txt"), result + "\n");
+        if (!(health && ammo && rank && score && timer)) throw new System.InvalidOperationException(result);
+        Debug.Log("[HUD Review] LIVE VALUES PASS: " + result);
+    }
+
+    private static object Field(PlayerHUD hud, string name) => typeof(PlayerHUD).GetField(name, Fields).GetValue(hud);
+    private static UnityEngine.UI.Text Text(PlayerHUD hud, string name) => (UnityEngine.UI.Text)Field(hud, name);
+}

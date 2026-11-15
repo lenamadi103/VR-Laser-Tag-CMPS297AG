@@ -52,6 +52,34 @@ public static class HudArt
     // Panel outline with outer glow (same shape as FrameFill).
     public static Sprite FrameLine => Frame("FrameLine", true);
 
+    // Fixed-width end tabs with a stretchable slim connection. The two
+    // existing bar Images render the complete shape: no extra UI draw objects.
+    public static Sprite ConnectedFrameFill => ConnectedFrame(false);
+    public static Sprite ConnectedFrameLine => ConnectedFrame(true);
+
+    private static Sprite ConnectedFrame(bool outline)
+    {
+        return Create(outline ? "ConnectedFrameLine" : "ConnectedFrameFill", 640, 128,
+            new Vector4(220f, 0f, 220f, 0f), (x, y) =>
+            {
+                float left = ChamferedRect(x - 110f, y - 64f, 102f, 56f, 14f);
+                float right = ChamferedRect(x - 530f, y - 64f, 102f, 56f, 14f);
+                float bridge = Mathf.Max(Mathf.Abs(x - 320f) - 210f, Mathf.Abs(y - 64f) - 6f);
+                float d = Mathf.Min(left, Mathf.Min(right, bridge));
+                if (!outline) return d <= 0f ? 1f : 0f;
+                float line = d <= 0f && d >= -2.5f ? 1f : 0f;
+                float glow = d > 0f ? .45f * Mathf.Exp(-d / 2.5f) : 0f;
+                return Mathf.Max(line, glow);
+            });
+    }
+
+    private static float ChamferedRect(float x, float y, float halfX, float halfY, float chamfer)
+    {
+        float ax = Mathf.Abs(x), ay = Mathf.Abs(y);
+        return Mathf.Max(Mathf.Max(ax - halfX, ay - halfY),
+            (ax + ay - (halfX + halfY - chamfer)) * .70710678f);
+    }
+
     // Rounded bar segment (health / ammo).
     public static Sprite Pill => Create("Pill", 16, new Vector4(6f, 6f, 6f, 6f),
         (x, y) => RoundedRect(x - 8f, y - 8f, 7f, 7f, 4f) <= 0f ? 1f : 0f);
@@ -160,14 +188,19 @@ public static class HudArt
 
     private static Sprite Create(string name, int size, Vector4 border, Painter painter)
     {
+        return Create(name, size, size, border, painter);
+    }
+
+    private static Sprite Create(string name, int width, int height, Vector4 border, Painter painter)
+    {
         if (Cache.TryGetValue(name, out Sprite cached) && cached != null)
             return cached;
 
-        Color32[] pixels = new Color32[size * size];
+        Color32[] pixels = new Color32[width * height];
 
-        for (int py = 0; py < size; py++)
+        for (int py = 0; py < height; py++)
         {
-            for (int px = 0; px < size; px++)
+            for (int px = 0; px < width; px++)
             {
                 float sum = 0f;
 
@@ -182,11 +215,11 @@ public static class HudArt
                 }
 
                 byte alpha = (byte)Mathf.RoundToInt(sum / (Samples * Samples) * 255f);
-                pixels[py * size + px] = new Color32(255, 255, 255, alpha);
+                pixels[py * width + px] = new Color32(255, 255, 255, alpha);
             }
         }
 
-        Texture2D texture = new Texture2D(size, size, TextureFormat.RGBA32, false)
+        Texture2D texture = new Texture2D(width, height, TextureFormat.RGBA32, false)
         {
             name = "Hud_" + name,
             filterMode = FilterMode.Bilinear,
@@ -195,7 +228,7 @@ public static class HudArt
         texture.SetPixels32(pixels);
         texture.Apply(false, true); // upload and free the CPU copy
 
-        Sprite sprite = Sprite.Create(texture, new Rect(0f, 0f, size, size), new Vector2(0.5f, 0.5f),
+        Sprite sprite = Sprite.Create(texture, new Rect(0f, 0f, width, height), new Vector2(0.5f, 0.5f),
             100f, 0, SpriteMeshType.FullRect, border);
         sprite.name = "Hud_" + name;
 
