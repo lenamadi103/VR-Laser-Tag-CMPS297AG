@@ -273,6 +273,10 @@ public class NetworkAutoTest : MonoBehaviour
             Check(info.Score.Value == 0 && info.Deaths.Value == 0, when + ": score not reset.");
     }
 
+    // Deaths seen per player, kept after a player leaves: their deaths still
+    // gave points to the players who eliminated them.
+    private readonly Dictionary<ulong, int> deathsSeen = new Dictionary<ulong, int>();
+
     private void HostObserve()
     {
         int totalDeaths = 0;
@@ -332,9 +336,12 @@ public class NetworkAutoTest : MonoBehaviour
 
         foreach (PlayerInfo info in PlayerInfo.All)
         {
-            totalDeaths += info.Deaths.Value;
+            deathsSeen[info.OwnerClientId] = info.Deaths.Value;
             totalScore += info.Score.Value;
         }
+
+        foreach (int deaths in deathsSeen.Values)
+            totalDeaths += deaths;
 
         // Every point comes from one elimination of another player.
         Check(totalScore <= totalDeaths, "More points (" + totalScore + ") than eliminations (" + totalDeaths + ").");
