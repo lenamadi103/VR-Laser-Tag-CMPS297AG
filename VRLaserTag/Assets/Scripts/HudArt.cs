@@ -152,6 +152,16 @@ public static class HudArt
         return r > 0.38f && r < 0.92f && offDiagonal < 0.08f;
     });
 
+    // Aim marker: centre dot inside a thin ring with four small gaps.
+    public static Sprite AimReticle => Icon("AimReticle", (u, v) =>
+    {
+        float r = Mathf.Sqrt(u * u + v * v);
+        bool dot = r <= 0.17f;
+        bool gap = Mathf.Abs(u) < 0.12f || Mathf.Abs(v) < 0.12f;
+        bool ring = r >= 0.66f && r <= 0.84f && !gap;
+        return dot || ring;
+    });
+
     // ------------------------------------------------------------------
 
     private static readonly Vector2[] PulseLine =

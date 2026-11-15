@@ -94,14 +94,14 @@ public class PlayerHUD : MonoBehaviour
     [Tooltip("Quest 2 (and Quest 3S). Offsets are degrees from the centre of the view.")]
     [SerializeField] private HudLayout quest2 = new HudLayout
     {
-        topOffset = 40f, sideOffset = 30f, bottomOffset = 38f,
+        topOffset = 28f, sideOffset = 30f, bottomOffset = 28f,
         topBarWidth = 704f, topScale = 1.9f, bottomScale = 2.2f, distance = 1.3f,
     };
 
     [Tooltip("Quest 3 (and Quest Pro). Offsets are degrees from the centre of the view.")]
     [SerializeField] private HudLayout quest3 = new HudLayout
     {
-        topOffset = 43f, sideOffset = 32f, bottomOffset = 44f,
+        topOffset = 30f, sideOffset = 32f, bottomOffset = 30f,
         topBarWidth = 704f, topScale = 2.3f, bottomScale = 2.7f, distance = 1.3f,
     };
 

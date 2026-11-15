@@ -32,8 +32,24 @@ public class LaserGunShooting : MonoBehaviour
     [Tooltip("Ray used for UI. While it points at a UI panel, the trigger clicks UI instead of firing.")]
     public XRRayInteractor uiRayInteractor;
 
+    [Tooltip("Show a small marker where a shot fired now would land.")]
+    public bool showAimMarker = true;
+
     private Coroutine laserCoroutine;
     private string lastAmmoLabel;
+    private AimMarker aimMarker;
+
+    private void Start()
+    {
+        if (showAimMarker && aimMarker == null)
+            aimMarker = AimMarker.Create(this);
+    }
+
+    private void OnDestroy()
+    {
+        if (aimMarker != null)
+            Destroy(aimMarker.gameObject);
+    }
 
     private void Reset()
     {
