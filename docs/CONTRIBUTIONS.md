@@ -32,7 +32,7 @@ We retained the existing arena, XR Origin, teleport setup, initial host-client n
 
 ## AI assistance and verification
 
-OpenAI Codex/ChatGPT assistance was used for HUD layout/scaling implementation support, platform previews, build and verification support, requirement review and drafting the submission documents. AI-assisted code and prose remain part of the team responsibility. Shared evidence includes runtime/source inspection, desktop multiplayer logs, live HUD-value checks, simulated layout bounds and APK signature/manifest verification. A fresh automated desktop rerun was blocked by Windows preference-access errors and is not counted as a pass.
+OpenAI Codex/ChatGPT assistance was used for HUD layout/scaling implementation support, platform previews, build and verification support, requirement review and drafting the submission documents. The team report also records Claude (Anthropic) assistance reviewing the report against the assignment brief. GitHub Copilot was used to refine this final submission report and map it to the supplied brief. AI-assisted code and prose remain part of the team responsibility. Shared evidence includes runtime/source inspection, desktop multiplayer logs, live HUD-value checks, simulated layout bounds and APK signature/manifest verification. A fresh automated desktop rerun was blocked by Windows preference-access errors and is not counted as a pass.
 
 ## Headset testing and remaining checks
 
