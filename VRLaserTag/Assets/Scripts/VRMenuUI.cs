@@ -50,6 +50,7 @@ public class VRMenuUI : MonoBehaviour
     private bool visible;
     private float nextRefreshTime;
     private float recenterUntil;
+    private bool placedInSession; // first spawn of this session handled
 
     private void Awake()
     {
@@ -97,6 +98,22 @@ public class VRMenuUI : MonoBehaviour
     // back in front of them.
     private void OnLocalRigPlaced()
     {
+        // First spawn after joining a match that is already running: close
+        // the lobby so the player sees the arena and the HUD right away
+        // (the countdown event that normally closes it happened before
+        // they joined).
+        if (!placedInSession)
+        {
+            placedInSession = true;
+            MatchManager match = MatchManager.Instance;
+            if (visible && match != null && match.IsSpawned &&
+                (match.State.Value == MatchState.Playing || match.State.Value == MatchState.Countdown))
+            {
+                SetVisible(false);
+                return;
+            }
+        }
+
         if (!visible)
             return;
 
@@ -350,7 +367,10 @@ public class VRMenuUI : MonoBehaviour
         // Show the menu again after leaving or losing the connection.
         LanConnectionManager lan = LanConnectionManager.Instance;
         if (lan != null && !lan.IsBusy)
+        {
+            placedInSession = false;
             SetVisible(true);
+        }
 
         Refresh();
     }
