@@ -56,4 +56,4 @@ The HUD work retained the existing element count, cached live-value updates and 
 | Spawn and movement | SpawnManager.cs, ValidatedTeleportationArea.cs, HeadCollisionFade.cs |
 | Interface | PlayerHUD.cs, ComfortHud.cs, HudArt.cs, VRMenuUI.cs, ScoreboardUI.cs |
 
-Detailed implementation and remaining limitations appear in the [technical report](TECHNICAL-REPORT.md).
+Detailed implementation and remaining limitations appear in the [technical report](Multiplayer-VR-Laser-Tag-Technical-Report.pdf).
