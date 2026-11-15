@@ -36,7 +36,7 @@ Take cover, teleport between positions and compete in a timed free-for-all match
 
 **The team reports a successful latest-APK test with three simultaneous players on Quest 2 and Quest 3, including the updated HUD.** Earlier mixed-device tests took place on 13 and 14 November. Detailed hardware logs and headset captures were not supplied for the latest retest.
 
-Historical desktop tests cover three- and five-process matches. Desktop process counts are separate from physical-headset coverage. Five simultaneous headsets and measured Quest 2 frame times remain outstanding. See [evidence and limitations](docs/TESTING.md).
+Historical desktop tests cover three- and five-process matches. Desktop process counts are separate from physical-headset coverage. A five-headset session mixing Quest 2 and Quest 3 worked on 13 November (team-reported, not recorded). Quest 3 frame times were measured; Quest 2 frame times are an estimate and remain unmeasured. See [evidence and limitations](docs/TESTING.md).
 
 ## Build identity
 
