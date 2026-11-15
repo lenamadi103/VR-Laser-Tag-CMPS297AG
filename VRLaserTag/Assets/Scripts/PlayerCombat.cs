@@ -125,8 +125,9 @@ public class PlayerCombat : NetworkBehaviour
         if (IsOwner)
             Local = this;
 
+        // Players who join a running match get the usual spawn protection.
         if (IsServer)
-            ServerResetCombatState(false);
+            ServerResetCombatState(MatchManager.Instance != null && MatchManager.Instance.IsCombatActive);
 
         IsEliminated.OnValueChanged += OnEliminatedChanged;
         IsReloading.OnValueChanged += OnReloadingChanged;
@@ -287,6 +288,10 @@ public class PlayerCombat : NetworkBehaviour
             ShotRejectedRpc(ShotRejectReason.MuzzleBlocked, RpcTarget.Single(OwnerClientId, RpcTargetUse.Temp));
             return;
         }
+
+        // Firing ends spawn protection: a player who just respawned cannot
+        // shoot while being impossible to hit.
+        invulnerableUntil = 0;
 
         Ammo.Value -= 1;
 
