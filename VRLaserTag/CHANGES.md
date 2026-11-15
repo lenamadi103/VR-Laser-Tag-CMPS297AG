@@ -300,3 +300,19 @@ The Floor is on the Default layer like walls and cover, so a head within ~22 cm 
 **Checked:** a simulation of the same logic against the arena's real block sizes. Walking at 1.4 m/s into Cover1-5 and the outer walls (standing, tall and crouching players, straight and diagonal) always stopped at the surface with no fade, and never came out on the other side. Players of average height cannot push their head out over the top of a low box (taller players can).
 
 - ❌ Not yet verified in Unity or on a headset: how the push-back feels while walking, and that it does not disturb teleporting, spawning or the automated tests.
+
+---
+
+## 11. Bug review fixes
+
+A review of all runtime scripts found these problems (fixed):
+
+- **Spawn protection could be abused** (`PlayerCombat`): a respawned player was invulnerable for 1.5 s but could already shoot. Firing now ends the protection. Players who join a running match now also get it.
+- **Late joiners were stuck behind the lobby menu** (`VRMenuUI`): the menu closes when the countdown starts, but a player who joined during a match never received that event, so the panel stayed in front of them and the HUD stayed hidden. On the first spawn of a session the menu now closes if a match is counting down or playing.
+- **False FAIL in the automated test** (`NetworkAutoTest`): the "points never exceed eliminations" check ignored the deaths of players who had left, so the leave-mid-match run failed (see section 8). The host now keeps the last death count of every player. Expected result: all three runs (3 players, 5 players, one player leaving) end with `AUTOTEST RESULT: PASS`.
+
+Checked and fine: LAN host/join and connection approval (max 5), match flow and scoring, respawn and spawn choice (spawn points are 1.2 m or more from every block, so push-back never moves a player at spawn), teleport rules, scoreboards, name tags, laser effects, audio and haptics.
+
+**Demo-day tip:** when a Quest is taken off, the app pauses. If that happens to the host, the whole session stops and clients disconnect after about 10 s. Keep the host headset on (or disable its proximity sensor with Meta Quest Developer Hub) during the demo.
+
+- ❌ Not yet verified in Unity: compile and the three automated runs after these changes.
