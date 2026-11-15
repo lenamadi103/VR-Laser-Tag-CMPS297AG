@@ -3,6 +3,35 @@ using Unity.Netcode;
 using UnityEngine;
 using UnityEngine.UI;
 
+public enum HudProfile
+{
+    Auto,
+    Windows,
+    Quest2,
+    Quest3,
+}
+
+// One HUD layout. Windows: offsets are shares of the window from its centre
+// (0 = centre, 1 = edge). Quest: offsets are degrees from the view centre.
+[System.Serializable]
+public class HudLayout
+{
+    [Tooltip("Top bar: how far above the centre.")]
+    public float topOffset;
+    [Tooltip("Health and ammo: how far left / right of the centre.")]
+    public float sideOffset;
+    [Tooltip("Health and ammo: how far below the centre.")]
+    public float bottomOffset;
+    [Tooltip("Width of the rank | time | score bar, in canvas pixels (1 px = 1 mm at the HUD distance).")]
+    public float topBarWidth = 1000f;
+    [Tooltip("Size of the top bar, text and icons (1 = base size).")]
+    public float topScale = 1f;
+    [Tooltip("Size of the health and ammo panels, text and icons.")]
+    public float bottomScale = 1f;
+    [Tooltip("Distance of the HUD from the eyes, in metres.")]
+    public float distance = 1.3f;
+}
+
 // HUD for the local player, laid out like a flat-screen shooter HUD:
 // rank | time | score along the top with the game mode below, health
 // bottom-left, ammo bottom-right, big status messages in the middle.
@@ -10,10 +39,12 @@ using UnityEngine.UI;
 // - The canvas is fixed in the player's view (ComfortHud, "Lock To View")
 //   1.3 m away, and drawn on top of the arena (HudOverlay shader), so walls
 //   and cover never cut through it.
-// - The panels sit towards the edges of the view (top bar high, health
-//   bottom-left, ammo bottom-right), like a flat-screen shooter, so the
-//   middle stays clear for aiming. Their angles and size are adjustable
-//   (Placement settings), also while the game runs in the Editor.
+// - Rank | time | score form one connected bar at the top; health sits
+//   bottom-left and ammo bottom-right, so the middle stays clear for aiming.
+// - Three layout profiles (Windows, Quest 2, Quest 3) hold the positions,
+//   sizes and distance. The right one is picked automatically; the desktop
+//   profile uses shares of the window, the headset profiles use view angles
+//   so the panels stay inside the area both eyes can see.
 // - There is no head-centred crosshair on purpose: in VR the shot follows
 //   the gun, not the head, so a crosshair in the middle of the view would
 //   point somewhere else than the gun.
@@ -49,31 +80,30 @@ public class PlayerHUD : MonoBehaviour
     [SerializeField] private float hitMarkerDuration = 0.15f;
     [SerializeField] private float goMessageDuration = 1.5f;
 
-    [Header("Placement: fitted to the headset")]
-    [Tooltip("On: the panels are placed from the headset's own field of view (read from its projection), so Quest 2, Quest 3 and the desktop window each get the same layout. Off: the fixed angles below are used.")]
-    [SerializeField] private bool fitToHeadset = true;
-    [Tooltip("Outer edge of the side panels, as a share of the half-width that BOTH eyes can see (0 = centre, 1 = edge of the two-eye area).")]
-    [Range(0.4f, 1f)] [SerializeField] private float sideFill = 0.78f;
-    [Tooltip("Top edge of the top row, as a share of the view above the centre.")]
-    [Range(0.3f, 0.9f)] [SerializeField] private float topFill = 0.5f;
-    [Tooltip("Bottom edge of the bottom row, as a share of the view below the centre.")]
-    [Range(0.3f, 0.9f)] [SerializeField] private float bottomFill = 0.5f;
+    [Header("Layout profiles")]
+    [Tooltip("Auto picks the profile from the device. Choose one to preview it in the Editor.")]
+    [SerializeField] private HudProfile profile = HudProfile.Auto;
 
-    [Header("Placement: fixed angles (used when Fit To Headset is off)")]
-    // Defaults put the panels near the corners of the view (flat-screen
-    // shooter style). Lower the angles if the text looks soft on Quest 2.
-    [Tooltip("How far left / right the corner panels (rank, score, health, ammo) sit.")]
-    [Range(8f, 40f)] [SerializeField] private float sideAngle = 31f;
-    [Tooltip("How far up the top row (rank, time, score) sits.")]
-    [Range(8f, 38f)] [SerializeField] private float topAngle = 28f;
-    [Tooltip("How far down the bottom row (health, ammo) sits.")]
-    [Range(8f, 38f)] [SerializeField] private float bottomAngle = 29f;
-    [Tooltip("Size of the panels (1 = original size).")]
-    [Range(0.7f, 1.6f)] [SerializeField] private float panelScale = 1.45f;
+    [Tooltip("Desktop window. Offsets are shares of the window from its centre (0 = centre, 1 = edge).")]
+    [SerializeField] private HudLayout windows = new HudLayout
+    {
+        topOffset = 0.56f, sideOffset = 0.72f, bottomOffset = 0.78f,
+        topBarWidth = 1300f, topScale = 1.1f, bottomScale = 1.2f, distance = 1.3f,
+    };
 
-    // HUD distance (1.3 m) in canvas pixels (1 px = 1 mm with the HUD's 0.001
-    // scale): turns a view angle into a position on the canvas.
-    private const float DistancePixels = 1300f;
+    [Tooltip("Quest 2 (and Quest 3S). Offsets are degrees from the centre of the view.")]
+    [SerializeField] private HudLayout quest2 = new HudLayout
+    {
+        topOffset = 27f, sideOffset = 26f, bottomOffset = 31f,
+        topBarWidth = 1000f, topScale = 1.2f, bottomScale = 1.3f, distance = 1.3f,
+    };
+
+    [Tooltip("Quest 3 (and Quest Pro). Offsets are degrees from the centre of the view.")]
+    [SerializeField] private HudLayout quest3 = new HudLayout
+    {
+        topOffset = 26f, sideOffset = 25f, bottomOffset = 34f,
+        topBarWidth = 1000f, topScale = 1.3f, bottomScale = 1.4f, distance = 1.3f,
+    };
 
     // Nominal canvas size in canvas pixels (the panels may sit outside it).
     private static readonly Vector2 CanvasSize = new Vector2(1040f, 660f);
@@ -84,6 +114,7 @@ public class PlayerHUD : MonoBehaviour
     private static readonly Color CyanGlow = new Color(0.3f, 0.85f, 1f, 0.25f);
     private static readonly Color Orange = new Color(1f, 0.6f, 0.18f);
     private static readonly Color PanelFill = new Color(0.02f, 0.06f, 0.1f, 0.78f);
+    private static readonly Color PanelSolid = new Color(0.02f, 0.06f, 0.1f, 0.97f);
     private static readonly Color LabelColor = new Color(0.82f, 0.9f, 1f);
     private static readonly Color SegmentOff = new Color(1f, 1f, 1f, 0.12f);
     private static readonly Color HealthGreen = new Color(0.3f, 0.95f, 0.45f);
@@ -97,8 +128,10 @@ public class PlayerHUD : MonoBehaviour
     private Image healthIcon;
     private Image hitMarkerImage;
     private RectTransform ammoBar;
-    private RectTransform timePanelRect, rankPanelRect, scorePanelRect, modeTagRect, healthPanelRect, ammoPanelRect;
+    private RectTransform topBarRect, barFrameRect, rankSectionRect, scoreSectionRect, healthPanelRect, ammoPanelRect;
+    private ComfortHud comfortHud;
     private Camera viewCamera;
+    private float viewAsymmetry;
     private float fitKey;
     private float nextFitCheck;
     private readonly List<Image> healthFill = new List<Image>();
@@ -147,14 +180,14 @@ public class PlayerHUD : MonoBehaviour
     private void Update()
     {
         // The headset reports its field of view only once XR is running (and
-        // the desktop window can be resized): re-fit when it changes.
-        if (fitToHeadset && Time.unscaledTime >= nextFitCheck)
+        // the desktop window can be resized): re-apply the layout on a change.
+        if (Time.unscaledTime >= nextFitCheck)
         {
             nextFitCheck = Time.unscaledTime + 0.5f;
 
             if (TryGetViewLimits(out float side, out float up, out float down))
             {
-                float key = side + 7f * up + 53f * down;
+                float key = side + 7f * up + 53f * down + (viewCamera.stereoEnabled ? 1000f : 0f);
                 if (Mathf.Abs(key - fitKey) > 0.005f)
                 {
                     fitKey = key;
@@ -431,29 +464,32 @@ public class PlayerHUD : MonoBehaviour
         statsGroup = NewRect(transform, "Stats", Vector2.zero, CanvasSize).gameObject;
         Transform stats = statsGroup.transform;
 
-        // Top centre: match time.
-        RectTransform timePanel = NewPanel(stats, "TimePanel", new Vector2(0f, 262f), new Vector2(232f, 112f), Cyan);
-        NewImage(timePanel, "Icon", new Vector2(-32f, 27f), new Vector2(26f, 26f), HudArt.Clock, LabelColor);
-        NewText(timePanel, "Label", new Vector2(32f, 27f), new Vector2(90f, 28f), 22, TextAnchor.MiddleLeft, LabelColor).text = "TIME";
-        timerText = NewText(timePanel, "Value", new Vector2(0f, -14f), new Vector2(210f, 62f), 56, TextAnchor.MiddleCenter, Color.white);
-        AddGlow(timerText);
+        // Top: one connected bar, rank | time | score. The frame spans the
+        // whole bar; the time section sits on top of it, slightly larger.
+        topBarRect = NewRect(stats, "TopBar", new Vector2(0f, 262f), new Vector2(1000f, 118f));
+        barFrameRect = NewPanel(topBarRect, "Frame", Vector2.zero, new Vector2(1000f, 88f), Cyan);
 
-        // Top left: rank.
-        RectTransform rankPanel = NewPanel(stats, "RankPanel", new Vector2(-214f, 268f), new Vector2(192f, 96f), Cyan);
-        NewImage(rankPanel, "Icon", new Vector2(-34f, 20f), new Vector2(26f, 26f), HudArt.Trophy, LabelColor);
-        NewText(rankPanel, "Label", new Vector2(30f, 20f), new Vector2(90f, 28f), 22, TextAnchor.MiddleLeft, LabelColor).text = "RANK";
-        rankValue = NewText(rankPanel, "Value", new Vector2(0f, -16f), new Vector2(170f, 48f), 42, TextAnchor.MiddleCenter, Cyan);
+        rankSectionRect = NewRect(topBarRect, "Rank", new Vector2(-390f, 0f), new Vector2(200f, 88f));
+        NewImage(rankSectionRect, "Icon", new Vector2(-34f, 18f), new Vector2(26f, 26f), HudArt.Trophy, LabelColor);
+        NewText(rankSectionRect, "Label", new Vector2(30f, 18f), new Vector2(90f, 28f), 22, TextAnchor.MiddleLeft, LabelColor).text = "RANK";
+        rankValue = NewText(rankSectionRect, "Value", new Vector2(0f, -16f), new Vector2(170f, 48f), 42, TextAnchor.MiddleCenter, Cyan);
         AddGlow(rankValue);
 
-        // Top right: score.
-        RectTransform scorePanel = NewPanel(stats, "ScorePanel", new Vector2(214f, 268f), new Vector2(192f, 96f), Cyan);
-        NewImage(scorePanel, "Icon", new Vector2(-42f, 20f), new Vector2(26f, 26f), HudArt.Target, LabelColor);
-        NewText(scorePanel, "Label", new Vector2(22f, 20f), new Vector2(90f, 28f), 22, TextAnchor.MiddleLeft, LabelColor).text = "SCORE";
-        scoreText = NewText(scorePanel, "Value", new Vector2(0f, -16f), new Vector2(170f, 48f), 42, TextAnchor.MiddleCenter, Color.white);
+        scoreSectionRect = NewRect(topBarRect, "Score", new Vector2(390f, 0f), new Vector2(200f, 88f));
+        NewImage(scoreSectionRect, "Icon", new Vector2(-42f, 18f), new Vector2(26f, 26f), HudArt.Target, LabelColor);
+        NewText(scoreSectionRect, "Label", new Vector2(22f, 18f), new Vector2(90f, 28f), 22, TextAnchor.MiddleLeft, LabelColor).text = "SCORE";
+        scoreText = NewText(scoreSectionRect, "Value", new Vector2(0f, -16f), new Vector2(170f, 48f), 42, TextAnchor.MiddleCenter, Color.white);
         AddGlow(scoreText);
 
-        // Game mode tag under the time.
-        RectTransform modeTag = NewPanel(stats, "ModeTag", new Vector2(0f, 186f), new Vector2(214f, 48f), Orange);
+        RectTransform timePanel = NewPanel(topBarRect, "Time", Vector2.zero, new Vector2(244f, 118f), Cyan);
+        timePanel.GetComponent<Image>().color = PanelSolid; // hides the bar's lines behind it
+        NewImage(timePanel, "Icon", new Vector2(-32f, 30f), new Vector2(26f, 26f), HudArt.Clock, LabelColor);
+        NewText(timePanel, "Label", new Vector2(32f, 30f), new Vector2(90f, 28f), 22, TextAnchor.MiddleLeft, LabelColor).text = "TIME";
+        timerText = NewText(timePanel, "Value", new Vector2(0f, -14f), new Vector2(220f, 64f), 58, TextAnchor.MiddleCenter, Color.white);
+        AddGlow(timerText);
+
+        // Game mode tag directly under the time section.
+        RectTransform modeTag = NewPanel(topBarRect, "ModeTag", new Vector2(0f, -80f), new Vector2(214f, 44f), Orange);
         NewText(modeTag, "Label", Vector2.zero, new Vector2(200f, 30f), 22, TextAnchor.MiddleCenter, Orange).text = "FREE FOR ALL";
 
         // Bottom left: health.
@@ -472,46 +508,81 @@ public class PlayerHUD : MonoBehaviour
         ammoBar = NewRect(ammoPanel, "Bar", new Vector2(0f, -28f), new Vector2(292f, 14f));
         // Ammo segments are built on the first update (magazine size).
 
-        timePanelRect = timePanel;
-        rankPanelRect = rankPanel;
-        scorePanelRect = scorePanel;
-        modeTagRect = modeTag;
         healthPanelRect = healthPanel;
         ammoPanelRect = ammoPanel;
+        comfortHud = GetComponent<ComfortHud>();
         ApplyPlacement();
     }
 
-    // Moves the panels to their view angles and applies the panel size.
+    // Applies the active layout profile: positions, sizes and HUD distance.
     private void ApplyPlacement()
     {
-        float s = panelScale;
+        bool hasView = TryGetViewLimits(out float side, out float up, out float down);
+        HudProfile active = profile == HudProfile.Auto ? DetectProfile() : profile;
+        HudLayout layout = active == HudProfile.Windows ? windows : active == HudProfile.Quest3 ? quest3 : quest2;
+
+        // 1 canvas pixel = 1 mm at the HUD distance.
+        float distancePixels = Mathf.Max(0.5f, layout.distance) * 1000f;
+        if (comfortHud != null)
+            comfortHud.distance = Mathf.Max(0.5f, layout.distance);
+
         float x, top, bottom;
 
-        if (fitToHeadset && TryGetViewLimits(out float side, out float up, out float down))
+        if (active == HudProfile.Windows)
         {
-            // Outer edges of the panels at a share of what the headset shows
-            // (half sizes: health/ammo 170 px wide, time 56 px, health 54 px high).
-            x = Mathf.Max(side * sideFill * DistancePixels - 170f * s, 190f * s);
-            top = Mathf.Max(up * topFill * DistancePixels - 56f * s, 120f);
-            bottom = Mathf.Max(down * bottomFill * DistancePixels - 54f * s, 120f);
+            // Shares of the window, measured from its centre.
+            if (!hasView)
+            {
+                side = 1.026f; // 60 degree camera, 16:9
+                up = down = 0.577f;
+            }
+
+            x = side * layout.sideOffset * distancePixels;
+            top = up * layout.topOffset * distancePixels;
+            bottom = down * layout.bottomOffset * distancePixels;
         }
         else
         {
-            x = Mathf.Tan(sideAngle * Mathf.Deg2Rad) * DistancePixels;
-            top = Mathf.Tan(topAngle * Mathf.Deg2Rad) * DistancePixels;
-            bottom = Mathf.Tan(bottomAngle * Mathf.Deg2Rad) * DistancePixels;
+            // View angles from the direction the head faces.
+            x = Mathf.Tan(layout.sideOffset * Mathf.Deg2Rad) * distancePixels;
+            top = Mathf.Tan(layout.topOffset * Mathf.Deg2Rad) * distancePixels;
+            bottom = Mathf.Tan(layout.bottomOffset * Mathf.Deg2Rad) * distancePixels;
         }
 
-        // Four corners: rank and score above health and ammo, with their
-        // outer edges lined up (the top panels are 148 px narrower).
-        float cornerX = x + 74f * s;
+        // Top bar: frame width, rank and score at its two ends.
+        float width = Mathf.Max(700f, layout.topBarWidth);
+        Vector2 frameSize = new Vector2(width, barFrameRect.sizeDelta.y);
+        barFrameRect.sizeDelta = frameSize;
+        if (barFrameRect.childCount > 0)
+            ((RectTransform)barFrameRect.GetChild(0)).sizeDelta = frameSize; // outline
 
-        PlacePanel(timePanelRect, 0f, top, s);
-        PlacePanel(modeTagRect, 0f, top - 76f * s, s);
-        PlacePanel(rankPanelRect, -cornerX, top, s);
-        PlacePanel(scorePanelRect, cornerX, top, s);
-        PlacePanel(healthPanelRect, -x, -bottom, s);
-        PlacePanel(ammoPanelRect, x, -bottom, s);
+        float end = width * 0.5f - 110f;
+        rankSectionRect.anchoredPosition = new Vector2(-end, 0f);
+        scoreSectionRect.anchoredPosition = new Vector2(end, 0f);
+
+        PlacePanel(topBarRect, 0f, top, layout.topScale);
+        PlacePanel(healthPanelRect, -x, -bottom, layout.bottomScale);
+        PlacePanel(ammoPanelRect, x, -bottom, layout.bottomScale);
+    }
+
+    // Desktop when the camera is not rendering in stereo; otherwise the
+    // headset model, or (if the model name is not recognised) the shape of
+    // its view: Quest 3 shows much more to the outer side of each eye.
+    private HudProfile DetectProfile()
+    {
+        if (viewCamera == null || !viewCamera.stereoEnabled)
+            return HudProfile.Windows;
+
+        string model = SystemInfo.deviceModel ?? "";
+
+        if (model.Contains("Quest 3S"))
+            return HudProfile.Quest2; // same lenses and view as Quest 2
+        if (model.Contains("Quest 3") || model.Contains("Quest Pro"))
+            return HudProfile.Quest3;
+        if (model.Contains("Quest 2"))
+            return HudProfile.Quest2;
+
+        return viewAsymmetry > 0.2f ? HudProfile.Quest3 : HudProfile.Quest2;
     }
 
     // How far the view reaches from its centre, as tangents of the angles,
@@ -544,6 +615,7 @@ public class PlayerHUD : MonoBehaviour
         up = (1f + m.m12) / m.m11;
         down = (1f - m.m12) / m.m11;
         side = Mathf.Min(left, right);
+        viewAsymmetry = Mathf.Abs(left - right);
 
         return side > 0.2f && up > 0.2f && down > 0.2f;
     }
@@ -554,10 +626,10 @@ public class PlayerHUD : MonoBehaviour
         panel.localScale = new Vector3(scale, scale, 1f);
     }
 
-    // Editor only: lets the Placement sliders be tuned while the game runs.
+    // Editor only: lets the layout profiles be tuned while the game runs.
     private void OnValidate()
     {
-        if (Application.isPlaying && timePanelRect != null)
+        if (Application.isPlaying && topBarRect != null)
             ApplyPlacement();
     }
 
