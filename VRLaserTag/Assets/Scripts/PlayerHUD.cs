@@ -53,13 +53,13 @@ public class PlayerHUD : MonoBehaviour
     // Defaults stay inside comfortable eye movement (about 25 degrees to the
     // side, less upwards than downwards) and the sharp part of Quest lenses.
     [Tooltip("How far left / right the corner panels (rank, score, health, ammo) sit.")]
-    [Range(8f, 35f)] [SerializeField] private float sideAngle = 22f;
+    [Range(8f, 35f)] [SerializeField] private float sideAngle = 28f;
     [Tooltip("How far up the top row (rank, time, score) sits.")]
-    [Range(8f, 30f)] [SerializeField] private float topAngle = 17f;
+    [Range(8f, 30f)] [SerializeField] private float topAngle = 19f;
     [Tooltip("How far down the bottom row (health, ammo) sits.")]
-    [Range(8f, 30f)] [SerializeField] private float bottomAngle = 20f;
+    [Range(8f, 30f)] [SerializeField] private float bottomAngle = 25f;
     [Tooltip("Size of the panels (1 = original size).")]
-    [Range(0.7f, 1.6f)] [SerializeField] private float panelScale = 1.15f;
+    [Range(0.7f, 1.6f)] [SerializeField] private float panelScale = 1.45f;
 
     // HUD distance (1.3 m) in canvas pixels (1 px = 1 mm with the HUD's 0.001
     // scale): turns a view angle into a position on the canvas.
