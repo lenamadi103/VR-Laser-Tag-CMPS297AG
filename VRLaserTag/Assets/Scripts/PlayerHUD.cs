@@ -50,10 +50,14 @@ public class PlayerHUD : MonoBehaviour
     [SerializeField] private float goMessageDuration = 1.5f;
 
     [Header("Placement (degrees from the centre of the view)")]
-    [Tooltip("How far left / right the health and ammo panels sit.")]
-    [Range(8f, 35f)] [SerializeField] private float sideAngle = 25f;
-    [Tooltip("How far up the top bar and how far down the health and ammo panels sit.")]
-    [Range(8f, 30f)] [SerializeField] private float verticalAngle = 22f;
+    // Defaults stay inside comfortable eye movement (about 25 degrees to the
+    // side, less upwards than downwards) and the sharp part of Quest lenses.
+    [Tooltip("How far left / right the corner panels (rank, score, health, ammo) sit.")]
+    [Range(8f, 35f)] [SerializeField] private float sideAngle = 22f;
+    [Tooltip("How far up the top row (rank, time, score) sits.")]
+    [Range(8f, 30f)] [SerializeField] private float topAngle = 17f;
+    [Tooltip("How far down the bottom row (health, ammo) sits.")]
+    [Range(8f, 30f)] [SerializeField] private float bottomAngle = 20f;
     [Tooltip("Size of the panels (1 = original size).")]
     [Range(0.7f, 1.6f)] [SerializeField] private float panelScale = 1.15f;
 
@@ -451,15 +455,20 @@ public class PlayerHUD : MonoBehaviour
     private void ApplyPlacement()
     {
         float x = Mathf.Tan(sideAngle * Mathf.Deg2Rad) * DistancePixels;
-        float y = Mathf.Tan(verticalAngle * Mathf.Deg2Rad) * DistancePixels;
+        float top = Mathf.Tan(topAngle * Mathf.Deg2Rad) * DistancePixels;
+        float bottom = Mathf.Tan(bottomAngle * Mathf.Deg2Rad) * DistancePixels;
         float s = panelScale;
 
-        PlacePanel(timePanelRect, 0f, y, s);
-        PlacePanel(rankPanelRect, -214f * s, y + 6f * s, s);
-        PlacePanel(scorePanelRect, 214f * s, y + 6f * s, s);
-        PlacePanel(modeTagRect, 0f, y - 76f * s, s);
-        PlacePanel(healthPanelRect, -x, -y, s);
-        PlacePanel(ammoPanelRect, x, -y, s);
+        // Four corners: rank and score above health and ammo, with their
+        // outer edges lined up (the top panels are 148 px narrower).
+        float cornerX = x + 74f * s;
+
+        PlacePanel(timePanelRect, 0f, top, s);
+        PlacePanel(modeTagRect, 0f, top - 76f * s, s);
+        PlacePanel(rankPanelRect, -cornerX, top, s);
+        PlacePanel(scorePanelRect, cornerX, top, s);
+        PlacePanel(healthPanelRect, -x, -bottom, s);
+        PlacePanel(ammoPanelRect, x, -bottom, s);
     }
 
     private static void PlacePanel(RectTransform panel, float x, float y, float scale)
